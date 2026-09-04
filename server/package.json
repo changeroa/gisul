@@ -1,10 +1,10 @@
 {
-  "name": "skillpack-mcp",
+  "name": "gisul",
   "version": "0.1.0",
   "private": false,
   "type": "module",
   "bin": {
-    "skillpack-mcp": "./dist/index.js"
+    "gisul": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

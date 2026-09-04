@@ -16,7 +16,6 @@ Tiny MCP server for serving personal `SKILL.md` directories from a local machine
 By default, the server reads these roots in order:
 
 - `~/gisul/skills`
-- `~/skillpack/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
 
@@ -24,7 +23,6 @@ Resource URIs include the source root to avoid duplicate-name collisions:
 
 ```text
 skill://gisul/gisul/example/SKILL.md
-skill://gisul/skillpack/example/SKILL.md
 skill://gisul/codex/re0/SKILL.md
 skill://gisul/agents/korean-spell-check/SKILL.md
 ```
@@ -38,7 +36,7 @@ Use a local machine as an on-demand MCP server over SSH:
   "mcpServers": {
     "gisul": {
       "command": "ssh",
-      "args": ["your-host", "skillpack-mcp"]
+      "args": ["your-host", "gisul"]
     }
   }
 }
@@ -50,7 +48,7 @@ Use a local machine as an on-demand MCP server over SSH:
 - `skills_get`: read one skill's `SKILL.md`.
 - `resources_read`: read `skill://<host>/<source>/<skill>/<path>` resources under a skill directory.
 
-Set `SKILLPACK_ROOT` or colon-delimited `SKILLPACK_SKILLS_DIRS` on the remote command to override the default roots.
+Set `GISUL_ROOT` or colon-delimited `GISUL_SKILLS_DIRS` on the remote command to override the default roots.
 
 ## HTTP mode
 
@@ -65,8 +63,6 @@ The persistent deployment runs Streamable HTTP MCP on `127.0.0.1:8788`.
 Secrets live outside the repository:
 
 ```text
-~/.config/secrets/skillpack-mcp-bearer-token
-~/.config/secrets/skillpack-mcp-admin-token
+~/.config/secrets/gisul-mcp-bearer-token
+~/.config/secrets/gisul-mcp-admin-token
 ```
-
-The executable and environment variable names still use `skillpack` in this prototype. The public project name is now `gisul`; CLI/package renaming can happen in a later compatibility pass.

@@ -14,15 +14,14 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 const DEFAULT_ROOT = path.join(homedir(), "gisul");
-const ROOT_DIR = path.resolve(process.env.SKILLPACK_ROOT ?? DEFAULT_ROOT);
+const ROOT_DIR = path.resolve(process.env.GISUL_ROOT ?? DEFAULT_ROOT);
 const DEFAULT_SKILL_ROOTS = [
   { id: "gisul", dir: path.join(ROOT_DIR, "skills") },
-  { id: "skillpack", dir: path.join(homedir(), "skillpack", "skills") },
   { id: "codex", dir: path.join(homedir(), ".codex", "skills") },
   { id: "agents", dir: path.join(homedir(), ".agents", "skills") },
 ];
-const SKILL_ROOTS = (process.env.SKILLPACK_SKILLS_DIRS
-  ? process.env.SKILLPACK_SKILLS_DIRS.split(path.delimiter)
+const SKILL_ROOTS = (process.env.GISUL_SKILLS_DIRS
+  ? process.env.GISUL_SKILLS_DIRS.split(path.delimiter)
       .filter(Boolean)
       .map((dir, index) => ({ id: `root${index}`, dir }))
   : DEFAULT_SKILL_ROOTS
@@ -31,12 +30,12 @@ const SKILL_ROOTS = (process.env.SKILLPACK_SKILLS_DIRS
   dir: path.resolve(root.dir),
 }));
 const MAX_RESOURCE_BYTES = 1024 * 1024;
-const SKILL_URI_AUTHORITY = process.env.SKILLPACK_URI_AUTHORITY ?? "gisul";
+const SKILL_URI_AUTHORITY = process.env.GISUL_URI_AUTHORITY ?? "gisul";
 const DEFAULT_HTTP_PORT = 8788;
-const STATE_DIR = path.resolve(process.env.SKILLPACK_STATE_DIR ?? path.join(homedir(), ".config", "skillpack-mcp"));
-const TOKEN_REQUESTS_FILE = path.resolve(process.env.SKILLPACK_TOKEN_REQUESTS_FILE ?? path.join(STATE_DIR, "token-requests.json"));
-const TOKENS_FILE = path.resolve(process.env.SKILLPACK_TOKENS_FILE ?? path.join(STATE_DIR, "tokens.json"));
-const ADMIN_TOKEN_FILE = path.resolve(process.env.SKILLPACK_ADMIN_TOKEN_FILE ?? path.join(STATE_DIR, "admin-token"));
+const STATE_DIR = path.resolve(process.env.GISUL_STATE_DIR ?? path.join(homedir(), ".config", "gisul-mcp"));
+const TOKEN_REQUESTS_FILE = path.resolve(process.env.GISUL_TOKEN_REQUESTS_FILE ?? path.join(STATE_DIR, "token-requests.json"));
+const TOKENS_FILE = path.resolve(process.env.GISUL_TOKENS_FILE ?? path.join(STATE_DIR, "tokens.json"));
+const ADMIN_TOKEN_FILE = path.resolve(process.env.GISUL_ADMIN_TOKEN_FILE ?? path.join(STATE_DIR, "admin-token"));
 
 type SkillSummary = {
   name: string;
@@ -327,7 +326,7 @@ function asJsonText(value: unknown) {
   };
 }
 
-function registerSkillpackTools(server: McpServer): void {
+function registerGisulTools(server: McpServer): void {
   server.registerTool(
     "skills_list",
     {
@@ -379,24 +378,24 @@ function registerSkillpackTools(server: McpServer): void {
   );
 }
 
-function createSkillpackServer(): McpServer {
+function createGisulServer(): McpServer {
   const server = new McpServer({
     name: "gisul",
     version: "0.1.0",
   });
-  registerSkillpackTools(server);
+  registerGisulTools(server);
   return server;
 }
 
 async function readBearerToken(): Promise<string | undefined> {
-  if (process.env.SKILLPACK_BEARER_TOKEN) return process.env.SKILLPACK_BEARER_TOKEN.trim();
-  if (!process.env.SKILLPACK_BEARER_TOKEN_FILE) return undefined;
+  if (process.env.GISUL_BEARER_TOKEN) return process.env.GISUL_BEARER_TOKEN.trim();
+  if (!process.env.GISUL_BEARER_TOKEN_FILE) return undefined;
 
-  return (await readFile(process.env.SKILLPACK_BEARER_TOKEN_FILE, "utf8")).trim();
+  return (await readFile(process.env.GISUL_BEARER_TOKEN_FILE, "utf8")).trim();
 }
 
 async function readAdminToken(bearerToken: string | undefined): Promise<string | undefined> {
-  if (process.env.SKILLPACK_ADMIN_TOKEN) return process.env.SKILLPACK_ADMIN_TOKEN.trim();
+  if (process.env.GISUL_ADMIN_TOKEN) return process.env.GISUL_ADMIN_TOKEN.trim();
   try {
     return (await readFile(ADMIN_TOKEN_FILE, "utf8")).trim();
   } catch {
@@ -419,9 +418,9 @@ async function isAuthorized(header: string | undefined, bearerToken: string | un
 function hasAdminCookie(req: Request, adminToken: string | undefined): boolean {
   if (!adminToken) return true;
   const cookies = req.headers.cookie?.split(";").map((value) => value.trim()) ?? [];
-  const cookie = cookies.find((value) => value.startsWith("skillpack_admin="));
+  const cookie = cookies.find((value) => value.startsWith("gisul_admin="));
   if (!cookie) return false;
-  return equalSecret(decodeURIComponent(cookie.slice("skillpack_admin=".length)), adminToken);
+  return equalSecret(decodeURIComponent(cookie.slice("gisul_admin=".length)), adminToken);
 }
 
 function requireAdmin(req: Request, res: Response, adminToken: string | undefined): boolean {
@@ -459,7 +458,7 @@ async function createTokenRequest(req: Request, res: Response): Promise<void> {
 
 async function getTokenRequest(req: Request, res: Response): Promise<void> {
   const id = String(req.params.id ?? "");
-  const claimToken = String(req.query.claim_token ?? req.headers["x-skillpack-claim-token"] ?? "");
+  const claimToken = String(req.query.claim_token ?? req.headers["x-gisul-claim-token"] ?? "");
   const store = await readTokenRequestStore();
   const record = store.requests.find((request) => request.id === id);
 
@@ -563,7 +562,7 @@ function page(title: string, body: string): string {
 async function showRequestForm(_req: Request, res: Response): Promise<void> {
   res.type("html").send(
     page(
-      "Request Skillpack Token",
+      "Request Gisul Token",
       `<h1>Request Token</h1>
       <form method="post" action="/auth/token-requests">
         <label>Client label<input name="label" placeholder="my laptop, claude desktop, test client"></label>
@@ -577,8 +576,8 @@ async function showRequestForm(_req: Request, res: Response): Promise<void> {
 async function showDashboardLogin(_req: Request, res: Response): Promise<void> {
   res.type("html").send(
     page(
-      "Skillpack Login",
-      `<h1>Skillpack Admin</h1>
+      "Gisul Login",
+      `<h1>Gisul Admin</h1>
       <form method="post" action="/dashboard/login" class="panel">
         <label>Admin token<input name="token" type="password" autocomplete="current-password"></label>
         <button type="submit">Log in</button>
@@ -596,7 +595,7 @@ async function handleDashboardLogin(req: Request, res: Response, adminToken: str
 
   res
     .status(303)
-    .set("Set-Cookie", `skillpack_admin=${encodeURIComponent(adminToken)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400`)
+    .set("Set-Cookie", `gisul_admin=${encodeURIComponent(adminToken)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400`)
     .set("Location", "/dashboard")
     .end();
 }
@@ -643,8 +642,8 @@ async function showDashboard(req: Request, res: Response, adminToken: string | u
 
   res.type("html").send(
     page(
-      "Skillpack Dashboard",
-      `<h1>Skillpack Dashboard</h1>
+      "Gisul Dashboard",
+      `<h1>Gisul Dashboard</h1>
       <p><a class="button secondary" href="/auth/request">Open request form</a></p>
       <h2>Requests</h2>
       <table>
@@ -661,7 +660,7 @@ async function showDashboard(req: Request, res: Response, adminToken: string | u
 }
 
 async function startStdio(): Promise<void> {
-  const server = createSkillpackServer();
+  const server = createGisulServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -671,7 +670,7 @@ async function startHttp(): Promise<void> {
   const adminToken = await readAdminToken(bearerToken);
   const port = Number(process.env.PORT ?? DEFAULT_HTTP_PORT);
   const host = process.env.HOST ?? "127.0.0.1";
-  const allowedHosts = (process.env.SKILLPACK_ALLOWED_HOSTS ?? "127.0.0.1,localhost")
+  const allowedHosts = (process.env.GISUL_ALLOWED_HOSTS ?? "127.0.0.1,localhost")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
@@ -715,7 +714,7 @@ async function startHttp(): Promise<void> {
       return;
     }
 
-    const server = createSkillpackServer();
+    const server = createGisulServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

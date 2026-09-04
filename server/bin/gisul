@@ -2,4 +2,4 @@
 set -eu
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
-exec node "$HOME/skillpack/server/dist/index.js" "$@"
+exec node "$HOME/gisul/server/dist/index.js" "$@"

@@ -43,7 +43,7 @@ export default {
     }
 
     if (url.pathname === "/healthz") {
-      return new Response(JSON.stringify({ ok: true, service: "macmini-skillpack-worker" }), {
+      return new Response(JSON.stringify({ ok: true, service: "gisul-worker" }), {
         headers: {
           "content-type": "application/json",
           "cache-control": "no-store",
@@ -79,7 +79,7 @@ export default {
 
     const originUrl = new URL(url.pathname + url.search, env.ORIGIN_BASE_URL);
     const headers = new Headers(request.headers);
-    headers.set("x-skillpack-proxy", "cloudflare-worker");
+    headers.set("x-gisul-proxy", "cloudflare-worker");
 
     const originResponse = await fetch(originUrl, {
       method: request.method,

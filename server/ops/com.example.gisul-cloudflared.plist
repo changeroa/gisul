@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.example.skillpack-cloudflared</string>
+  <string>com.example.gisul-cloudflared</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/cloudflared</string>
     <string>tunnel</string>
     <string>--config</string>
-    <string>/Users/YOUR_USER/skillpack/cloudflared/config.yml</string>
+    <string>/Users/YOUR_USER/gisul/cloudflared/config.yml</string>
     <string>run</string>
   </array>
 
@@ -21,9 +21,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/YOUR_USER/Library/Logs/skillpack-cloudflared.out.log</string>
+  <string>/Users/YOUR_USER/Library/Logs/gisul-cloudflared.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/YOUR_USER/Library/Logs/skillpack-cloudflared.err.log</string>
+  <string>/Users/YOUR_USER/Library/Logs/gisul-cloudflared.err.log</string>
 </dict>
 </plist>

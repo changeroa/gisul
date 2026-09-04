@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.example.skillpack-mcp</string>
+  <string>com.example.gisul-mcp</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/YOUR_USER/.local/bin/skillpack-mcp</string>
+    <string>/Users/YOUR_USER/.local/bin/gisul</string>
     <string>--http</string>
   </array>
 
@@ -19,14 +19,14 @@
     <string>127.0.0.1</string>
     <key>PORT</key>
     <string>8788</string>
-    <key>SKILLPACK_BEARER_TOKEN_FILE</key>
-    <string>/Users/YOUR_USER/.config/secrets/skillpack-mcp-bearer-token</string>
-    <key>SKILLPACK_ADMIN_TOKEN_FILE</key>
-    <string>/Users/YOUR_USER/.config/secrets/skillpack-mcp-admin-token</string>
+    <key>GISUL_BEARER_TOKEN_FILE</key>
+    <string>/Users/YOUR_USER/.config/secrets/gisul-mcp-bearer-token</string>
+    <key>GISUL_ADMIN_TOKEN_FILE</key>
+    <string>/Users/YOUR_USER/.config/secrets/gisul-mcp-admin-token</string>
   </dict>
 
   <key>WorkingDirectory</key>
-  <string>/Users/YOUR_USER/skillpack/server</string>
+  <string>/Users/YOUR_USER/gisul/server</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -35,9 +35,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/YOUR_USER/Library/Logs/skillpack-mcp.out.log</string>
+  <string>/Users/YOUR_USER/Library/Logs/gisul-mcp.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/YOUR_USER/Library/Logs/skillpack-mcp.err.log</string>
+  <string>/Users/YOUR_USER/Library/Logs/gisul-mcp.err.log</string>
 </dict>
 </plist>

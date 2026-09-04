@@ -45,11 +45,8 @@ POST http://127.0.0.1:8788/mcp
 Default skill roots:
 
 - `~/gisul/skills`
-- `~/skillpack/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
-
-`~/skillpack/skills` is kept as a legacy fallback while the prototype is being renamed.
 
 ### Worker
 

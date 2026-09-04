@@ -27,7 +27,7 @@ The server exposes:
 
 It discovers skill directories from:
 
-- `~/skillpack/skills`
+- `~/gisul/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
 
@@ -49,7 +49,7 @@ The deployed personal setup used this shape:
 MCP client
   -> public Worker endpoint
   -> Cloudflare Tunnel origin hostname
-  -> local Mac mini process on 127.0.0.1:8788
+  -> local machine process on 127.0.0.1:8788
 ```
 
 The origin server validates bearer tokens. The Worker requires a bearer-shaped Authorization header before forwarding `/mcp`, but token validity is checked by the local server so newly approved tokens do not require redeploying the Worker.
@@ -102,13 +102,13 @@ The design follows the apparent direction of MCP Skills-over-MCP discussions:
    - `GET /api/skills/:source/:name`
    - `GET /api/resources?uri=...`
 
-2. Add a `skillpack` CLI:
+2. Add a `gisul` CLI:
 
-   - `skillpack request-token`
-   - `skillpack list`
-   - `skillpack load <name>`
-   - `skillpack mount <name> --target codex|claude`
-   - `skillpack unmount <name> --target codex|claude`
+   - `gisul request-token`
+   - `gisul list`
+   - `gisul load <name>`
+   - `gisul mount <name> --target codex|claude`
+   - `gisul unmount <name> --target codex|claude`
 
 3. Add digest metadata:
 
@@ -119,4 +119,3 @@ The design follows the apparent direction of MCP Skills-over-MCP discussions:
 4. Add a tiny loader skill for Codex/Claude:
 
    The loader skill should instruct the agent to search the remote skill registry first, load only the selected skill, and avoid copying broad skill catalogs into the current context.
-

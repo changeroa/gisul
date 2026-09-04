@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "macmini-skillpack-mcp",
+  "name": "gisul-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-03",
   "observability": {
@@ -8,6 +8,6 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    "ORIGIN_BASE_URL": "https://skillpack-origin.example.com"
+    "ORIGIN_BASE_URL": "https://gisul-origin.example.com"
   }
 }
