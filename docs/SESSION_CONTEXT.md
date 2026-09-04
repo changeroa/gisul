@@ -119,3 +119,17 @@ The design follows the apparent direction of MCP Skills-over-MCP discussions:
 4. Add a tiny loader skill for Codex/Claude:
 
    The loader skill should instruct the agent to search the remote skill registry first, load only the selected skill, and avoid copying broad skill catalogs into the current context.
+
+## 2026-09-04: SEP-2640 alignment (implemented)
+
+The server now serves skills per the accepted SEP-2640 Skills Extension (V1 scope):
+
+- declares `io.modelcontextprotocol/skills` with `directoryRead: true` in `initialize`
+- `skills/list` + `skills/get` extension methods returning `{uri, digest, size}` resource manifests that cover every file, including nested skills' files
+- skill files served as standard MCP resources via `resources/read`; `resources/directory/read` for scoped navigation
+- URIs are `skill://<authority>/<source>/<name>/SKILL.md`: file-explicit, final path segment equals the frontmatter `name`
+- V1 limits enforced per skill: 512 resources / 16 MiB; violators are skipped and logged
+- legacy tools (`skills_list`, `skills_get`, `resources_read`) kept as a compatibility layer
+- wire-level conformance suite: `cd server && npm test` (node:test, raw JSON-RPC over stdio, fixture roots via `GISUL_SKILLS_DIRS`)
+
+Deliberately out of V1: `"resources": "dynamic"` (local static roots only), archive distribution (deferred by the SEP itself), provenance/signature (V3), and host-side cache/mount keying on server identity + URI (V2, a host concern). The worker needs no change — it proxies `POST /mcp` generically, which is exactly why the SEP defers token validation to the origin.

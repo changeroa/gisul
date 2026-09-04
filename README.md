@@ -58,6 +58,18 @@ npx wrangler deploy
 
 Set `ORIGIN_BASE_URL` in `worker/wrangler.jsonc` to the Cloudflare Tunnel hostname that points at the local server.
 
+## Skills extension (SEP-2640)
+
+The server implements the accepted [SEP-2640 Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) (`io.modelcontextprotocol/skills`):
+
+- `skills/list` and `skills/get` extension methods with per-file `{uri, digest, size}` resource manifests
+- every skill file readable through the standard `resources/read` resource primitive
+- `resources/directory/read` for scoped directory navigation (declared via `directoryRead: true`)
+- URIs carry the file path explicitly: `skill://<authority>/<source>/<skill-name>/SKILL.md`
+- skills need `name` and `description` frontmatter with `name` matching the directory name; nested skills get their own entries; skills over 512 files or 16 MiB total are skipped and logged
+
+The older `skills_list` / `skills_get` / `resources_read` tools remain as a compatibility layer.
+
 ## Authentication
 
 The HTTP server supports:
@@ -71,6 +83,6 @@ No real secrets are included in this repository. The files in `server/ops/` are 
 
 ## Current status
 
-This is a personal prototype, not a stable MCP extension implementation. It tracks the current direction of the MCP Skills working-group discussion, but uses pragmatic tool names (`skills_list`, `skills_get`, `resources_read`) until the upstream extension shape settles.
+This is a personal prototype, not a stable MCP extension implementation. The upstream Skills extension shape has settled (SEP-2640, accepted) and this server implements it; the pragmatic tool names (`skills_list`, `skills_get`, `resources_read`) remain as a compatibility layer for older clients.
 
 See [docs/SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) for the session handoff context behind this version.

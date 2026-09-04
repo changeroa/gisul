@@ -44,9 +44,24 @@ Use a local machine as an on-demand MCP server over SSH:
 
 ## Tools
 
-- `skills_list`: list installed skills.
-- `skills_get`: read one skill's `SKILL.md`.
-- `resources_read`: read `skill://<host>/<source>/<skill>/<path>` resources under a skill directory.
+The canonical surface is the SEP-2640 Skills Extension (`io.modelcontextprotocol/skills`):
+
+- `skills/list`: enumerate served skills with verbatim frontmatter and per-file digest manifests
+- `skills/get`: fetch one skill's entry by URI, listed or not
+- `resources/read`: read any skill file as a standard MCP resource
+- `resources/directory/read`: list a directory's direct children (declared via `directoryRead: true`)
+
+Resource URIs include the source root id and the explicit file path:
+
+```text
+skill://gisul/gisul/example/SKILL.md
+skill://gisul/codex/re0/SKILL.md
+skill://gisul/agents/korean-spell-check/references/GUIDE.md
+```
+
+To be listed, a skill needs `SKILL.md` frontmatter with `name` and `description`, and `name` equal to the directory name (nested skills publish their own entries). Skills exceeding 512 files or 16 MiB total are skipped and logged to stderr.
+
+The `skills_list`, `skills_get`, and `resources_read` tools are kept as a compatibility layer for older clients.
 
 Set `GISUL_ROOT` or colon-delimited `GISUL_SKILLS_DIRS` on the remote command to override the default roots.
 
