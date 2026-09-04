@@ -1,11 +1,11 @@
-# skillpack-mcp
+# gisul MCP server
 
-Tiny stdio MCP server for serving personal `SKILL.md` directories from a Mac mini over SSH.
+Tiny MCP server for serving personal `SKILL.md` directories from a local machine over stdio, SSH, or Streamable HTTP.
 
 ## Layout
 
 ```text
-~/skillpack/
+~/gisul/
   skills/
     example/
       SKILL.md
@@ -15,6 +15,7 @@ Tiny stdio MCP server for serving personal `SKILL.md` directories from a Mac min
 
 By default, the server reads these roots in order:
 
+- `~/gisul/skills`
 - `~/skillpack/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
@@ -22,21 +23,22 @@ By default, the server reads these roots in order:
 Resource URIs include the source root to avoid duplicate-name collisions:
 
 ```text
-skill://macmini/skillpack/example/SKILL.md
-skill://macmini/codex/re0/SKILL.md
-skill://macmini/agents/korean-spell-check/SKILL.md
+skill://gisul/gisul/example/SKILL.md
+skill://gisul/skillpack/example/SKILL.md
+skill://gisul/codex/re0/SKILL.md
+skill://gisul/agents/korean-spell-check/SKILL.md
 ```
 
 ## Client command
 
-Use the Mac mini as an on-demand MCP server:
+Use a local machine as an on-demand MCP server over SSH:
 
 ```json
 {
   "mcpServers": {
-    "macmini-skills": {
+    "gisul": {
       "command": "ssh",
-      "args": ["macmini", "skillpack-mcp"]
+      "args": ["your-host", "skillpack-mcp"]
     }
   }
 }
@@ -46,13 +48,13 @@ Use the Mac mini as an on-demand MCP server:
 
 - `skills_list`: list installed skills.
 - `skills_get`: read one skill's `SKILL.md`.
-- `resources_read`: read `skill://macmini/<source>/<skill>/<path>` resources under a skill directory.
+- `resources_read`: read `skill://<host>/<source>/<skill>/<path>` resources under a skill directory.
 
 Set `SKILLPACK_ROOT` or colon-delimited `SKILLPACK_SKILLS_DIRS` on the remote command to override the default roots.
 
 ## HTTP mode
 
-The Mac mini deployment runs persistent Streamable HTTP MCP on `127.0.0.1:8788`.
+The persistent deployment runs Streamable HTTP MCP on `127.0.0.1:8788`.
 
 - `POST /mcp`: MCP endpoint, protected by bearer token.
 - `GET /auth/request`: simple request form.
@@ -66,3 +68,5 @@ Secrets live outside the repository:
 ~/.config/secrets/skillpack-mcp-bearer-token
 ~/.config/secrets/skillpack-mcp-admin-token
 ```
+
+The executable and environment variable names still use `skillpack` in this prototype. The public project name is now `gisul`; CLI/package renaming can happen in a later compatibility pass.

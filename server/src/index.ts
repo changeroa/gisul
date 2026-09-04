@@ -13,22 +13,25 @@ import express from "express";
 import type { Request, Response } from "express";
 import { z } from "zod";
 
-const DEFAULT_ROOT = path.join(homedir(), "skillpack");
+const DEFAULT_ROOT = path.join(homedir(), "gisul");
 const ROOT_DIR = path.resolve(process.env.SKILLPACK_ROOT ?? DEFAULT_ROOT);
+const DEFAULT_SKILL_ROOTS = [
+  { id: "gisul", dir: path.join(ROOT_DIR, "skills") },
+  { id: "skillpack", dir: path.join(homedir(), "skillpack", "skills") },
+  { id: "codex", dir: path.join(homedir(), ".codex", "skills") },
+  { id: "agents", dir: path.join(homedir(), ".agents", "skills") },
+];
 const SKILL_ROOTS = (process.env.SKILLPACK_SKILLS_DIRS
   ? process.env.SKILLPACK_SKILLS_DIRS.split(path.delimiter)
-  : [
-      path.join(ROOT_DIR, "skills"),
-      path.join(homedir(), ".codex", "skills"),
-      path.join(homedir(), ".agents", "skills"),
-    ]
-)
-  .filter(Boolean)
-  .map((dir, index) => ({
-    id: ["skillpack", "codex", "agents"][index] ?? `root${index}`,
-    dir: path.resolve(dir),
-  }));
+      .filter(Boolean)
+      .map((dir, index) => ({ id: `root${index}`, dir }))
+  : DEFAULT_SKILL_ROOTS
+).map((root) => ({
+  id: root.id,
+  dir: path.resolve(root.dir),
+}));
 const MAX_RESOURCE_BYTES = 1024 * 1024;
+const SKILL_URI_AUTHORITY = process.env.SKILLPACK_URI_AUTHORITY ?? "gisul";
 const DEFAULT_HTTP_PORT = 8788;
 const STATE_DIR = path.resolve(process.env.SKILLPACK_STATE_DIR ?? path.join(homedir(), ".config", "skillpack-mcp"));
 const TOKEN_REQUESTS_FILE = path.resolve(process.env.SKILLPACK_TOKEN_REQUESTS_FILE ?? path.join(STATE_DIR, "token-requests.json"));
@@ -253,7 +256,7 @@ async function listResourceUris(record: SkillRecord): Promise<string[]> {
 
       const relative = path.relative(baseDir, nextPath).split(path.sep).join("/");
       output.push(
-        `skill://macmini/${encodeURIComponent(record.source)}/${encodeURIComponent(safeName)}/${relative
+        `skill://${SKILL_URI_AUTHORITY}/${encodeURIComponent(record.source)}/${encodeURIComponent(safeName)}/${relative
           .split("/")
           .map(encodeURIComponent)
           .join("/")}`,
@@ -299,7 +302,7 @@ async function listSkills(query?: string): Promise<SkillSummary[]> {
           name,
           source: root.id,
           description,
-          uri: `skill://macmini/${encodeURIComponent(root.id)}/${encodeURIComponent(entry.name)}`,
+          uri: `skill://${SKILL_URI_AUTHORITY}/${encodeURIComponent(root.id)}/${encodeURIComponent(entry.name)}`,
           path: filePath,
           sha256: hashText(markdown),
           resources: await listResourceUris(record),
@@ -329,7 +332,7 @@ function registerSkillpackTools(server: McpServer): void {
     "skills_list",
     {
       title: "List skills",
-      description: "List SKILL.md packages available from the Mac mini skillpack.",
+      description: "List SKILL.md packages available from gisul.",
       inputSchema: {
         query: z.string().optional().describe("Optional case-insensitive substring filter."),
       },
@@ -363,9 +366,9 @@ function registerSkillpackTools(server: McpServer): void {
     "resources_read",
     {
       title: "Read skill resource",
-      description: "Read a skill resource by skill://macmini/<source>/<skill>/<path> URI.",
+      description: "Read a skill resource by skill://<authority>/<source>/<skill>/<path> URI.",
       inputSchema: {
-        uri: z.string().describe("Resource URI, for example skill://macmini/agents/korean-spell-check/SKILL.md."),
+        uri: z.string().describe("Resource URI, for example skill://gisul/agents/korean-spell-check/SKILL.md."),
       },
     },
     async ({ uri }) => {
@@ -378,7 +381,7 @@ function registerSkillpackTools(server: McpServer): void {
 
 function createSkillpackServer(): McpServer {
   const server = new McpServer({
-    name: "macmini-skillpack",
+    name: "gisul",
     version: "0.1.0",
   });
   registerSkillpackTools(server);
@@ -676,7 +679,7 @@ async function startHttp(): Promise<void> {
   app.use(express.urlencoded({ extended: false }));
 
   app.get("/healthz", (_req: Request, res: Response) => {
-    res.status(200).json({ ok: true, service: "macmini-skillpack" });
+    res.status(200).json({ ok: true, service: "gisul" });
   });
 
   app.get("/auth/request", showRequestForm);
@@ -745,7 +748,7 @@ async function startHttp(): Promise<void> {
       console.error("Failed to start HTTP MCP server:", error);
       process.exit(1);
     }
-    console.error(`macmini-skillpack listening on http://${host}:${port}/mcp`);
+    console.error(`gisul listening on http://${host}:${port}/mcp`);
   });
 }
 

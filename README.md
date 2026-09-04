@@ -1,6 +1,8 @@
-# skillpack-mcp
+# gisul
 
-Personal MCP skill registry for serving `SKILL.md`-style instruction bundles from a local machine, with an optional Cloudflare Worker proxy.
+`gisul` is a personal MCP skill registry for serving `SKILL.md`-style instruction bundles from a local machine.
+
+The name comes from 기술, Korean for "skill", "craft", or "technique".
 
 This repo contains two small packages:
 
@@ -13,7 +15,7 @@ The intended deployment is:
 Codex / Claude / MCP client
   -> Cloudflare Worker
   -> Cloudflare Tunnel
-  -> local Mac/Linux host running skillpack-mcp
+  -> local Mac/Linux host running the gisul MCP server
   -> local skill directories
 ```
 
@@ -42,9 +44,12 @@ POST http://127.0.0.1:8788/mcp
 
 Default skill roots:
 
+- `~/gisul/skills`
 - `~/skillpack/skills`
 - `~/.codex/skills`
 - `~/.agents/skills`
+
+`~/skillpack/skills` is kept as a legacy fallback while the prototype is being renamed.
 
 ### Worker
 
@@ -72,4 +77,3 @@ No real secrets are included in this repository. The files in `server/ops/` are 
 This is a personal prototype, not a stable MCP extension implementation. It tracks the current direction of the MCP Skills working-group discussion, but uses pragmatic tool names (`skills_list`, `skills_get`, `resources_read`) until the upstream extension shape settles.
 
 See [docs/SESSION_CONTEXT.md](docs/SESSION_CONTEXT.md) for the session handoff context behind this version.
-
