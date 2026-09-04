@@ -50,6 +50,12 @@ Use a local machine as an on-demand MCP server over SSH:
 
 Set `GISUL_ROOT` or colon-delimited `GISUL_SKILLS_DIRS` on the remote command to override the default roots.
 
+When serving through a public tunnel, set `GISUL_ALLOWED_HOSTS` to include the tunnel hostname:
+
+```text
+GISUL_ALLOWED_HOSTS=127.0.0.1,localhost,gisul-origin.example.com
+```
+
 ## HTTP mode
 
 The persistent deployment runs Streamable HTTP MCP on `127.0.0.1:8788`.
