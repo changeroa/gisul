@@ -58,6 +58,83 @@ test("Codex bridge searches metadata, loads exact identity and pins supporting f
   } finally { await client.close(); await server.close(); }
 });
 
+test("Codex search exposes every filtered match across upstream and result pages", async () => {
+  const entries = Array.from({ length: 125 }, (_, index) => {
+    const uri = `skill://gisul/root${String(index).padStart(3, "0")}/review/SKILL.md`;
+    return {
+      uri,
+      frontmatter: { name: "review", description: index < 123 ? "Team review" : "Other workflow" },
+      resources: [{ uri, size: 0, digest: `sha256:${createHash("sha256").update("").digest("hex")}` }],
+    };
+  });
+  const requests = [];
+  const upstream = {
+    request: async ({ method, params }) => {
+      assert.equal(method, "skills/list");
+      requests.push(params);
+      const offset = params.cursor ? Number(params.cursor) : 0;
+      const end = offset + 17;
+      return { skills: entries.slice().reverse().slice(offset, end), ...(end < entries.length ? { nextCursor: String(end) } : {}) };
+    },
+    readResource: async () => { assert.fail("search must not read skill bodies"); },
+  };
+  const server = createCodexBridge(upstream, "fixture-host");
+  const client = new Client({ name: "pagination-test", version: "1" });
+  const [front, back] = InMemoryTransport.createLinkedPair();
+  await server.connect(back);
+  await client.connect(front);
+  const search = async args => {
+    const result = await client.callTool({ name: "search_skills", arguments: args });
+    assert.ok(!result.isError, JSON.stringify(result));
+    return JSON.parse(result.content[0].text);
+  };
+  try {
+    const query = " TEAM   review ";
+    const defaults = await search({ query });
+    assert.equal(defaults.offset, 0);
+    assert.equal(defaults.limit, 10);
+    assert.equal(defaults.skills.length, 10);
+    assert.equal(defaults.nextOffset, 10);
+    assert.deepEqual(requests, [{}, ...[17, 34, 51, 68, 85, 102, 119].map(cursor => ({ cursor: String(cursor) }))]);
+
+    const collected = [];
+    let offset = 0;
+    for (const size of [50, 50, 23]) {
+      const page = await search({ query, limit: 50, offset });
+      assert.equal(page.origin, "fixture-host");
+      assert.equal(page.totalMatches, 123);
+      assert.equal(page.offset, offset);
+      assert.equal(page.limit, 50);
+      assert.equal(page.skills.length, size);
+      collected.push(...page.skills.map(skill => skill.uri));
+      if (size === 50) assert.equal(page.nextOffset, offset + size);
+      else assert.ok(!Object.hasOwn(page, "nextOffset"));
+      offset = page.nextOffset;
+    }
+    assert.deepEqual(collected, entries.slice(0, 123).map(entry => entry.uri));
+    assert.equal(new Set(collected).size, 123, "same-named skills are neither skipped nor duplicated");
+    assert.equal((await search({ limit: 50 })).totalMatches, 125);
+    assert.equal((await search({ query, offset: 73, limit: 50 })).nextOffset, undefined, "an exactly full final page terminates");
+    for (const args of [{ query, offset: 123 }, { query, offset: 124 }, { query, offset: Number.MAX_SAFE_INTEGER }, { query: "missing" }]) {
+      const page = await search(args);
+      assert.deepEqual(page.skills, []);
+      assert.equal(page.totalMatches, args.query === "missing" ? 0 : 123);
+      assert.ok(!Object.hasOwn(page, "nextOffset"));
+    }
+
+    const requestCount = requests.length;
+    for (const args of [
+      ...[-1, 0.5, "50", null, true, Number.MAX_SAFE_INTEGER + 1].map(offset => ({ offset })),
+      ...[0, -1, 51, 1.5, "10", null].map(limit => ({ limit })),
+    ]) {
+      const result = await client.callTool({ name: "search_skills", arguments: args });
+      assert.equal(result.isError, true, JSON.stringify(args));
+      assert.match(result.content[0].text, /Input validation error/);
+    }
+    assert.equal(requests.length, requestCount, "invalid pagination is rejected before upstream requests");
+  } finally { await client.close(); await server.close(); }
+});
+
 test("Codex stdio adapter interoperates with the real gisul server", { timeout: 15000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "gisul-codex-test-"));
   const client = new Client({ name: "codex-smoke", version: "1" });

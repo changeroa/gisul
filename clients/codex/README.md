@@ -100,8 +100,9 @@ this does not modify Codex itself or guarantee automatic selection for every tas
 
 ## Behavior and boundaries
 
-- Search returns compact names, descriptions and exact URIs. Same-named skills
-  remain separate. Search uses all literal query words and follows pagination.
+- Search returns compact names, descriptions and exact URIs. Same-named skills remain separate. Search uses all literal query words, reads all upstream catalog pages, and sorts matches by URI before applying `offset` (default 0) and `limit` (default 10, maximum 50).
+- Search responses include `totalMatches`, `offset`, and `limit`. When `nextOffset` is present, pass it as `offset` with the same `query` and `limit` to continue; its absence marks the last page. For example, start with `{"query":"review","limit":50}`, then use `{"query":"review","limit":50,"offset":50}` if `nextOffset` is 50. Each call rereads the live catalog, so additions or removals between calls can shift pages; restart from offset 0 if the catalog changes.
+- `offset` must be a nonnegative safe integer and `limit` an integer from 1 to 50; invalid values return an MCP tool error. An offset at or beyond `totalMatches` returns an empty page without `nextOffset`, as does a search with no matches.
 - Load fetches the current manifest and only `SKILL.md`. Every file read checks
   SHA-256 and size. Frontmatter must match the manifest.
 - Supporting files are read lazily against the manifest held for this connection.

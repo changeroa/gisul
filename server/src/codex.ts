@@ -53,9 +53,13 @@ export function createCodexBridge(client: Client, origin: string): McpServer {
   }
 
   server.registerTool("search_skills", {
-    description: "Find remote personal/team workflow skills. Returns names, descriptions and exact URIs, not full content. Call load_skill on the selected URI.",
-    inputSchema: { query: z.string().optional(), limit: z.number().int().min(1).max(50).default(10) }, annotations,
-  }, async ({ query, limit }) => {
+    description: "Find remote personal/team workflow skills. Returns names, descriptions and exact URIs, not full content. To continue, pass nextOffset as offset with the same query and limit until nextOffset is absent. Call load_skill on the selected URI.",
+    inputSchema: {
+      query: z.string().optional(),
+      limit: z.number().int().min(1).max(50).default(10),
+      offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe("Zero-based offset into URI-sorted matches; use nextOffset from the previous response"),
+    }, annotations,
+  }, async ({ query, limit, offset }) => {
     const matches: Array<{ uri: string; name: string; description: string }> = [];
     let cursor: string | undefined;
     const cursors = new Set<string>();
@@ -72,7 +76,10 @@ export function createCodexBridge(client: Client, origin: string): McpServer {
       if (cursor) cursors.add(cursor);
       if (++pages >= 100 && cursor) throw new Error("Catalog exceeds 100 pages; use a known skill URI directly");
     } while (cursor);
-    return json({ origin, skills: matches.slice(0, limit), totalMatches: matches.length, note: "A partial or empty catalog does not exclude skills available by URI." });
+    matches.sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0);
+    const skills = matches.slice(offset, offset + limit);
+    const nextOffset = offset + skills.length < matches.length ? offset + skills.length : undefined;
+    return json({ origin, skills, totalMatches: matches.length, offset, limit, nextOffset, note: "A partial or empty catalog does not exclude skills available by URI." });
   });
 
   server.registerTool("load_skill", {
