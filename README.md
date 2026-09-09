@@ -70,6 +70,14 @@ The server implements the accepted [SEP-2640 Skills Extension](https://github.co
 
 The older `skills_list` / `skills_get` / `resources_read` tools remain as a compatibility layer.
 
+## Codex integration
+
+The [Codex plugin](clients/codex/README.md) lets Codex search remote
+skills, load a selected skill, and read supporting files with per-file integrity
+checks. Build the plugin with `cd server && npm run build:codex-plugin` and install
+it from a Codex marketplace. It bundles the MCP adapter and the small Gisul loader;
+remote skills stay on the server.
+
 ## Authentication
 
 The HTTP server supports:

@@ -1,0 +1,17 @@
+{
+  "name": "gisul",
+  "version": "0.1.0",
+  "description": "Search and read personal workflow skills from gisul over SSH, with file integrity checks.",
+  "author": { "name": "Victor" },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Gisul",
+    "shortDescription": "Mac mini의 워크플로 스킬을 찾아 적용합니다.",
+    "longDescription": "Search the remote gisul library, load a selected workflow, and read supporting files only when needed. Each file is verified against its manifest.",
+    "developerName": "Victor",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": ["Gisul에서 이 작업에 맞는 스킬을 찾아 적용해줘."]
+  }
+}
