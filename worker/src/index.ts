@@ -17,16 +17,22 @@ function hasBearerAuth(request: Request): boolean {
   return Boolean(authorization?.startsWith("Bearer "));
 }
 
-function corsHeaders(request: Request): HeadersInit {
+function corsHeaders(request: Request, existingVary: string | null = null): HeadersInit {
   const origin = request.headers.get("origin");
   if (!origin) return {};
+
+  let vary = existingVary ?? "";
+  const fields = vary.split(",").map((field) => field.trim().toLowerCase());
+  if (!fields.includes("*") && !fields.includes("origin")) {
+    vary = vary ? `${vary}, Origin` : "Origin";
+  }
 
   return {
     "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
     "access-control-max-age": "86400",
-    vary: "Origin",
+    vary,
   };
 }
 
@@ -89,7 +95,7 @@ export default {
     });
     const responseHeaders = new Headers(originResponse.headers);
 
-    for (const [key, value] of Object.entries(corsHeaders(request))) {
+    for (const [key, value] of Object.entries(corsHeaders(request, responseHeaders.get("vary")))) {
       responseHeaders.set(key, value);
     }
     responseHeaders.set("cache-control", "no-store");

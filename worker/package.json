@@ -4,6 +4,7 @@
   "private": false,
   "type": "module",
   "scripts": {
+    "test": "node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "deploy": "wrangler deploy"
   },
