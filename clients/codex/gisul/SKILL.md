@@ -5,7 +5,9 @@ description: Find and apply personal or team workflow instructions from the conn
 
 Use the `gisul` MCP server's `search_skills`, `load_skill`, and `read_skill_file` tools.
 
-Search by the task's main subject. Search uses literal terms from names and descriptions; if a query returns nothing, try one broader term or omit the query. If the user provides a skill URI, load it directly. Choose by relevance and exact URI; do not resolve duplicate names by taking the first match.
+If the user provides a skill URI, load it directly. Otherwise search with a few keywords for the task's main subject, keeping the default 5 results. All query words must occur in the name or description; this is literal search, not semantic or translated search. If nothing matches, try fewer or broader terms, using the library's language.
+
+Search ranks exact names first, then matches in names, and returns description excerpts of at most 240 characters. Choose by task fit and exact URI; do not resolve duplicate names by taking the first match. Refine the query before requesting more candidates. Use `nextOffset` with the same query and limit only when another page would help. Browse without a query, raise the limit, or enumerate all pages when the user asks for a catalog. A connection check needs only `limit: 1`.
 
 Call `load_skill` before applying the selected workflow. Read the returned Markdown in full. If the tool output is truncated, do not claim to have read or applied the full skill. Mention which skill and remote origin you are using. Follow relevant guidance within the user's requested task.
 
