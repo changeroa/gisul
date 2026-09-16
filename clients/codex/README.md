@@ -124,6 +124,14 @@ this does not modify Codex itself or guarantee automatic selection for every tas
 - `offset` must be a nonnegative safe integer and `limit` an integer from 1 to 50; invalid values return an MCP tool error. An offset at or beyond `totalMatches` returns an empty page without `nextOffset`, as does a search with no matches.
 - Load fetches the current manifest and only `SKILL.md`. Every file read checks
   SHA-256 and size. Frontmatter must match the manifest.
+- Load reports `release`, content `commit`, `server_version`, and a reproducible
+  `manifest_digest`. Unknown upstream version fields are `null`. A moved skill
+  returns its canonical `uri` and `movedFrom`; undeclared and cross-server
+  redirects fail verification. Search also matches string entries in frontmatter
+  `keywords`, including Korean discovery terms.
+- Manifests over 20 files return a compact `files` list folded into immediate
+  directories. `read_skill_file` on a returned directory expands its pinned
+  children without reading their bodies. File reads still verify exact bytes.
 - Supporting files are read lazily against the manifest held for this connection.
   Files outside it and changed bytes fail. Reload explicitly to inspect an update.
 - Each response names the configured upstream origin. The adapter has exactly one
@@ -134,6 +142,21 @@ this does not modify Codex itself or guarantee automatic selection for every tas
   adapter cannot intercept Codex's other execution tools or implement native
   host-wide consent enforcement. Digest verification establishes consistency,
   not trust in the author. An execution approval is never granted by a tool response.
+
+## Event evidence
+
+The bridge appends JSONL events to
+`${CODEX_HOME:-~/.codex}/logs/gisul/events-<YYYYMMDD>.jsonl` (UTC date). Override
+the directory with `GISUL_EVENT_LOG_DIR`, for example in isolated tests. Events
+include connection lifecycle, searches, loads, reads, and classified errors, with
+release/digest, byte count, and duration where available. Skill bodies and bearer
+credentials are not recorded. Logging failure is reported on stderr and does not
+prevent workflow calls.
+
+Each tool response includes the same `connection_id` as its event records, so
+trace exporters can join exact connections. `bridge_cwd` is the bridge process's
+directory, often the installed plugin directory; it is not evidence of the user's
+project workspace. Codex session IDs are not invented by the bridge.
 
 ## Test
 

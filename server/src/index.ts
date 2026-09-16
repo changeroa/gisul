@@ -22,15 +22,7 @@ const DEFAULT_SKILL_ROOTS = [
   { id: "codex", dir: path.join(homedir(), ".codex", "skills") },
   { id: "agents", dir: path.join(homedir(), ".agents", "skills") },
 ];
-const SKILL_ROOTS = (process.env.GISUL_SKILLS_DIRS
-  ? process.env.GISUL_SKILLS_DIRS.split(path.delimiter)
-      .filter(Boolean)
-      .map((dir, index) => ({ id: `root${index}`, dir }))
-  : DEFAULT_SKILL_ROOTS
-).map((root) => ({
-  id: root.id,
-  dir: path.resolve(root.dir),
-}));
+const SKILL_ROOTS = configuredSkillRoots();
 const MAX_RESOURCE_BYTES = 16 * 1024 * 1024;
 const SKILL_URI_AUTHORITY = process.env.GISUL_URI_AUTHORITY ?? "gisul";
 const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
@@ -41,6 +33,33 @@ const STATE_DIR = path.resolve(process.env.GISUL_STATE_DIR ?? path.join(homedir(
 const TOKEN_REQUESTS_FILE = path.resolve(process.env.GISUL_TOKEN_REQUESTS_FILE ?? path.join(STATE_DIR, "token-requests.json"));
 const TOKENS_FILE = path.resolve(process.env.GISUL_TOKENS_FILE ?? path.join(STATE_DIR, "tokens.json"));
 const ADMIN_TOKEN_FILE = path.resolve(process.env.GISUL_ADMIN_TOKEN_FILE ?? path.join(STATE_DIR, "admin-token"));
+const RELEASE_FILE = path.resolve(process.env.GISUL_RELEASE_FILE ?? path.join(ROOT_DIR, "release.json"));
+const ALIASES_FILE = path.resolve(process.env.GISUL_ALIASES_FILE ?? path.join(ROOT_DIR, "aliases.json"));
+const SERVER_VERSION = "0.1.0";
+
+function configuredSkillRoots(): Array<{ id: string; dir: string }> {
+  const configured = process.env.GISUL_SKILL_ROOTS;
+  if (configured !== undefined) {
+    const ids = new Set<string>();
+    const roots = configured.split(";").map(value => {
+      const separator = value.indexOf("=");
+      const id = value.slice(0, separator).trim();
+      const dir = value.slice(separator + 1).trim();
+      if (separator < 1 || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id) || !path.isAbsolute(dir) || ids.has(id)) {
+        throw new Error("GISUL_SKILL_ROOTS requires unique URI-safe ids and absolute directories: gisul=/path/skills;codex=/path/codex-skills");
+      }
+      ids.add(id);
+      return { id, dir: path.resolve(dir) };
+    });
+    if (process.env.GISUL_SKILLS_DIRS) console.error("GISUL_SKILLS_DIRS is deprecated and ignored because GISUL_SKILL_ROOTS is configured");
+    return roots;
+  }
+  if (process.env.GISUL_SKILLS_DIRS) {
+    console.error("GISUL_SKILLS_DIRS is deprecated; use GISUL_SKILL_ROOTS to preserve stable URI source ids");
+    return process.env.GISUL_SKILLS_DIRS.split(path.delimiter).filter(Boolean).map((dir, index) => ({ id: `root${index}`, dir: path.resolve(dir) }));
+  }
+  return DEFAULT_SKILL_ROOTS;
+}
 
 type SkillSummary = {
   name: string;
@@ -69,6 +88,42 @@ type SkillEntry = {
   frontmatter: Record<string, unknown>;
   resources: SkillResourceManifest[];
 };
+
+const releaseSchema = z.object({
+  release: z.string().min(1),
+  commit: z.string().regex(/^[a-f0-9]{7,40}$/),
+  skills: z.array(z.object({ uri: z.string(), manifest_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) })).optional(),
+});
+type ReleaseRecord = { data: z.infer<typeof releaseSchema>; fingerprint: string };
+
+function manifestDigest(entry: SkillEntry): string {
+  const resources = entry.resources.map(({ uri, digest, size }) => ({ uri, digest, size })).sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0);
+  return `sha256:${createHash("sha256").update(JSON.stringify(resources)).digest("hex")}`;
+}
+
+async function readRelease(): Promise<ReleaseRecord | undefined> {
+  let text: string;
+  try { text = await readFile(RELEASE_FILE, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  const parsed = releaseSchema.safeParse(JSON.parse(text));
+  if (!parsed.success) throw new McpError(ErrorCode.InternalError, "Invalid gisul release metadata");
+  return { data: parsed.data, fingerprint: createHash("sha256").update(text).digest("hex") };
+}
+
+async function releaseMetadata(before: ReleaseRecord | undefined, entries: SkillEntry[], complete = false): Promise<Record<string, string>> {
+  const after = await readRelease();
+  if (before?.fingerprint !== after?.fingerprint) throw new McpError(ErrorCode.InternalError, "Gisul release changed during this request; retry against the current release");
+  const meta: Record<string, string> = { server_version: SERVER_VERSION };
+  if (!before) return meta;
+  const manifest = before.data.skills;
+  if (manifest) {
+    const byUri = new Map(manifest.map(skill => [skill.uri, skill.manifest_digest]));
+    if (byUri.size !== manifest.length || (complete && entries.length !== manifest.length) || entries.some(entry => byUri.get(entry.uri) !== manifestDigest(entry))) {
+      throw new McpError(ErrorCode.InternalError, "Served skills differ from release metadata; publish a matching release before claiming its version");
+    }
+  }
+  return { ...meta, release: before.data.release, commit: before.data.commit };
+}
 
 type TokenRequestStatus = "pending" | "approved" | "denied" | "delivered";
 
@@ -430,6 +485,11 @@ async function collectSkillRelativeFiles(baseDir: string): Promise<string[]> {
 async function buildSkillEntry(source: string, rootDir: string, dirName: string): Promise<SkillEntry | null> {
   let markdown: string;
   try {
+    const info = await lstat(path.join(rootDir, dirName, "SKILL.md"));
+    if (!info.isFile() || info.isSymbolicLink()) {
+      console.error(`Skipping skill ${source}/${dirName}: SKILL.md must be a regular file`);
+      return null;
+    }
     markdown = await readFile(path.join(rootDir, dirName, "SKILL.md"), "utf8");
   } catch {
     return null;
@@ -534,7 +594,7 @@ function parseSkillUriSegments(uri: string): { source: string; pathSegments: str
   } catch {
     return null;
   }
-  if (parsed.protocol !== "skill:" || !parsed.pathname || parsed.pathname === "/") return null;
+  if (parsed.protocol !== "skill:" || parsed.host !== SKILL_URI_AUTHORITY || parsed.username || parsed.password || parsed.search || parsed.hash || !parsed.pathname || parsed.pathname === "/") return null;
 
   let segments: string[];
   try {
@@ -563,6 +623,26 @@ function resolveSkillPath(source: string, pathSegments: string[]): { rootDir: st
   return { rootDir: root.dir, relativePath };
 }
 
+async function resolveSkillAlias(uri: string): Promise<string> {
+  let contents: string;
+  try { contents = await readFile(ALIASES_FILE, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return uri; throw error; }
+  const aliases = z.record(z.string(), z.string()).parse(JSON.parse(contents));
+  let current = uri;
+  const visited = new Set<string>();
+  while (Object.hasOwn(aliases, current)) {
+    if (visited.has(current) || visited.size >= 8) throw new McpError(ErrorCode.InternalError, "Cyclic or excessive gisul URI aliases");
+    visited.add(current);
+    const next = aliases[current];
+    const parsed = parseSkillUriSegments(next);
+    if (!parsed || parsed.pathSegments.at(-1) !== "SKILL.md" || next !== skillUri(parsed.source, ...parsed.pathSegments)) {
+      throw new McpError(ErrorCode.InternalError, "Alias target must be a canonical SKILL.md URI on this server");
+    }
+    current = next;
+  }
+  return current;
+}
+
 async function readSkillResourceByUri(uri: string): Promise<{ mimeType: string; text?: string; blob?: string }> {
   const parsed = parseSkillUriSegments(uri);
   if (!parsed) throw new McpError(ErrorCode.InvalidParams, `Invalid skill resource URI: ${uri}`);
@@ -570,7 +650,7 @@ async function readSkillResourceByUri(uri: string): Promise<{ mimeType: string; 
   const resolved = resolveSkillPath(parsed.source, parsed.pathSegments);
   if (!resolved) throw new McpError(ErrorCode.InvalidParams, `Unknown skill resource: ${uri}`);
 
-  const filePath = path.join(resolved.rootDir, resolved.relativePath);
+  const filePath = await assertRegularSkillPath(resolved.rootDir, resolved.relativePath.split("/"));
   let info;
   try {
     info = await stat(filePath);
@@ -596,7 +676,7 @@ async function readSkillDirectoryByUri(uri: string): Promise<Array<{ uri: string
   const resolved = resolveSkillPath(parsed.source, parsed.pathSegments);
   if (!resolved) throw new McpError(ErrorCode.InvalidParams, `Unknown skill directory: ${uri}`);
 
-  const dirPath = path.join(resolved.rootDir, resolved.relativePath);
+  const dirPath = await assertRegularSkillPath(resolved.rootDir, resolved.relativePath.split("/"), "directory");
   let info;
   try {
     info = await stat(dirPath);
@@ -607,7 +687,7 @@ async function readSkillDirectoryByUri(uri: string): Promise<Array<{ uri: string
 
   const entries = await readdir(dirPath, { withFileTypes: true });
   return entries
-    .filter((entry) => !entry.name.startsWith(".") && entry.name !== "node_modules")
+    .filter((entry) => !entry.name.startsWith(".") && entry.name !== "node_modules" && (entry.isFile() || entry.isDirectory()))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => ({
       uri: skillUri(parsed.source, ...parsed.pathSegments, entry.name),
@@ -639,16 +719,19 @@ async function listSkillResourcesForClient(): Promise<
 }
 
 function registerSkillsExtension(server: McpServer): void {
-  server.server.setRequestHandler(SkillsListRequestSchema, async () => ({
-    resultType: "complete",
-    skills: await listSkillEntries(),
-  }));
+  server.server.setRequestHandler(SkillsListRequestSchema, async () => {
+    const release = await readRelease();
+    const skills = await listSkillEntries();
+    return { resultType: "complete", skills, _meta: await releaseMetadata(release, skills, true) };
+  });
 
   server.server.setRequestHandler(SkillsGetRequestSchema, async (request) => {
+    const release = await readRelease();
     const uri = request.params.uri;
-    const entry = (await listSkillEntries()).find((candidate) => candidate.uri === uri);
+    const canonical = await resolveSkillAlias(uri);
+    const entry = (await listSkillEntries()).find((candidate) => candidate.uri === canonical);
     if (!entry) throw new McpError(ErrorCode.InvalidParams, `Not a skill served by this server: ${uri}`);
-    return { resultType: "complete", skill: entry };
+    return { resultType: "complete", skill: entry, _meta: { ...await releaseMetadata(release, [entry]), ...(canonical !== uri ? { movedFrom: uri } : {}) } };
   });
 
   server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
@@ -754,13 +837,15 @@ async function withSkillWriteLock<T>(source: string, action: (root: string) => P
   try { return await action(root); } finally { await rm(lock, { recursive: true }); }
 }
 
-async function assertRegularSkillPath(root: string, segments: string[]): Promise<string> {
+async function assertRegularSkillPath(root: string, segments: string[], leaf: "file" | "directory" = "file"): Promise<string> {
   let current = root;
   for (const [index, segment] of segments.entries()) {
     current = path.join(current, segment);
-    const info = await lstat(current);
-    if (info.isSymbolicLink() || (index === segments.length - 1 ? !info.isFile() : !info.isDirectory())) {
-      throw new Error("Writes require regular files and directories; symbolic links are not writable");
+    let info;
+    try { info = await lstat(current); }
+    catch { throw new McpError(ErrorCode.InvalidParams, "Unknown or inaccessible skill resource"); }
+    if (info.isSymbolicLink() || (index === segments.length - 1 && leaf === "file" ? !info.isFile() : !info.isDirectory())) {
+      throw new McpError(ErrorCode.InvalidParams, "Skill resources require regular files and directories; internal symbolic links are not accessible");
     }
   }
   return current;
@@ -817,7 +902,7 @@ function createGisulServer(writable = false): McpServer {
   const server = new McpServer(
     {
       name: "gisul",
-      version: "0.1.0",
+      version: SERVER_VERSION,
     },
     {
       capabilities: {

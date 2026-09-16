@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,7 +143,8 @@ test("Codex stdio adapter interoperates with the real gisul server", { timeout: 
     await writeFile(join(root, "example/SKILL.md"), "---\nname: example\ndescription: Test workflow\n---\nFollow the test workflow.\n");
     const adapter = fileURLToPath(new URL("../dist/codex.js", import.meta.url));
     const upstream = fileURLToPath(new URL("../dist/index.js", import.meta.url));
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [adapter, "--origin", "fixture-host", "--", "env", `GISUL_SKILLS_DIRS=${root}`, process.execPath, upstream] }));
+    const eventDir = join(root, "events");
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [adapter, "--origin", "fixture-host", "--", "env", `GISUL_SKILLS_DIRS=${root}`, process.execPath, upstream], env: { ...process.env, GISUL_EVENT_LOG_DIR: eventDir } }));
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["create_skill", "load_skill", "read_skill_file", "search_skills", "update_skill"]);
     const result = await client.callTool({ name: "search_skills", arguments: { query: "workflow" } });
@@ -162,11 +163,67 @@ test("Codex stdio adapter interoperates with the real gisul server", { timeout: 
     assert.equal((await call("update_skill", { uri, expected_digest: digest, markdown: changed })).isError, true, "bridge requires verified load");
     const first = JSON.parse((await call("load_skill", { uri })).content[0].text);
     assert.equal(first.digest, digest);
+    assert.match(first.connection_id, /^c_[0-9]+_[0-9]+$/);
     assert.ok(!(await call("update_skill", { uri, expected_digest: first.digest, markdown: changed })).isError);
     assert.equal((await call("read_skill_file", { skill_uri: uri, uri })).isError, true, "old manifest must fail verification");
     const second = JSON.parse((await call("load_skill", { uri })).content[0].text);
     assert.equal(second.changed, true);
     assert.equal(second.markdown, changed);
     assert.equal((await call("update_skill", { uri, expected_digest: first.digest, markdown })).isError, true);
+    await client.close();
+    const log = (await Promise.all((await readdir(eventDir)).map(file => readFile(join(eventDir, file), "utf8")))).join("");
+    const events = log.trim().split("\n").map(line => JSON.parse(line));
+    for (const event of ["connect", "search", "load_skill", "error", "disconnect"]) assert.ok(events.some(item => item.event === event), event);
+    assert.ok(events.every(event => event.connection_id === first.connection_id));
+    assert.ok(events.some(event => event.event === "load_skill" && event.manifest_digest && event.bytes > 0));
+    assert.ok(events.some(event => event.code === "gisul_verification_failed"));
+    assert.ok(!log.includes("Follow the test workflow.") && !log.includes("name: new-flow"), "event logs must not contain skill bodies");
   } finally { await client.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("bridge reports release identity, follows explicit aliases, searches keywords, and expands pinned directories", async () => {
+  const uri = "skill://gisul/gisul/delivery/SKILL.md";
+  const oldUri = "skill://gisul/codex/delivery/SKILL.md";
+  const root = uri.slice(0, -8);
+  const markdown = "---\nname: delivery\ndescription: Delivery workflow\nkeywords: [개발, 티켓, implementation]\n---\nRead references when needed.\n";
+  const bodies = new Map([[uri, markdown], ...Array.from({ length: 25 }, (_, index) => [`${root}references/file-${index}.md`, `Guide ${index}`])]);
+  const entry = { uri, frontmatter: { name: "delivery", description: "Delivery workflow", keywords: ["개발", "티켓", "implementation"] }, resources: [...bodies].map(([uri, body]) => ({ uri, digest: `sha256:${createHash("sha256").update(body).digest("hex")}`, size: Buffer.byteLength(body) })) };
+  let meta = { release: "20260916.1", commit: "a".repeat(40), server_version: "0.1.0", movedFrom: oldUri };
+  let omitChild = false;
+  const reads = [];
+  const server = createCodexBridge({
+    request: async ({ method }) => {
+      if (method === "skills/list") return { skills: [entry] };
+      if (method === "skills/get") return { skill: entry, _meta: meta };
+      if (method === "resources/directory/read") return { resources: [...bodies.keys()].filter(key => key.includes("/references/")).slice(omitChild ? 1 : 0).map(uri => ({ uri })) };
+      throw new Error(method);
+    },
+    readResource: async ({ uri }) => { reads.push(uri); return { contents: [{ uri, text: bodies.get(uri) }] }; },
+  }, "fixture");
+  const client = new Client({ name: "versioned-bridge-test", version: "1" });
+  const [front, back] = InMemoryTransport.createLinkedPair();
+  await server.connect(back); await client.connect(front);
+  const call = (name, args) => client.callTool({ name, arguments: args });
+  const data = result => { assert.ok(!result.isError, JSON.stringify(result)); return JSON.parse(result.content[0].text); };
+  try {
+    assert.equal(data(await call("search_skills", { query: "개발 티켓" })).totalMatches, 1);
+    const loaded = data(await call("load_skill", { uri: oldUri }));
+    assert.equal(loaded.uri, uri);
+    assert.equal(loaded.movedFrom, oldUri);
+    assert.equal(loaded.release, meta.release);
+    assert.equal(loaded.commit, meta.commit);
+    const ordered = entry.resources.slice().sort((a, b) => a.uri < b.uri ? -1 : 1);
+    assert.equal(loaded.manifest_digest, `sha256:${createHash("sha256").update(JSON.stringify(ordered)).digest("hex")}`);
+    assert.deepEqual(loaded.files, [uri, `${root}references`]);
+    assert.equal(loaded.filesFolded, true);
+    assert.deepEqual(reads, [uri], "large manifests must not fetch supporting bodies eagerly");
+    const directory = data(await call("read_skill_file", { skill_uri: oldUri, uri: `${root}references` }));
+    assert.equal(directory.files.length, 25);
+    assert.equal(directory.manifest_digest, loaded.manifest_digest);
+    assert.equal(data(await call("read_skill_file", { skill_uri: uri, uri: directory.files[0] })).release, meta.release);
+    omitChild = true;
+    assert.equal((await call("read_skill_file", { skill_uri: uri, uri: `${root}references` })).isError, true);
+    meta = { ...meta, movedFrom: "skill://wrong/source/delivery/SKILL.md" };
+    assert.equal((await call("load_skill", { uri: oldUri })).isError, true, "an undeclared redirect must fail");
+  } finally { await client.close(); await server.close(); }
 });
