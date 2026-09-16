@@ -145,7 +145,7 @@ test("Codex stdio adapter interoperates with the real gisul server", { timeout: 
     const upstream = fileURLToPath(new URL("../dist/index.js", import.meta.url));
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [adapter, "--origin", "fixture-host", "--", "env", `GISUL_SKILLS_DIRS=${root}`, process.execPath, upstream] }));
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["load_skill", "read_skill_file", "search_skills"]);
+    assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["create_skill", "load_skill", "read_skill_file", "search_skills", "update_skill"]);
     const result = await client.callTool({ name: "search_skills", arguments: { query: "workflow" } });
     assert.ok(!result.isError, JSON.stringify(result));
     const found = JSON.parse(result.content[0].text);
@@ -153,5 +153,20 @@ test("Codex stdio adapter interoperates with the real gisul server", { timeout: 
     const loaded = await client.callTool({ name: "load_skill", arguments: { uri: found.skills[0].uri } });
     assert.ok(!loaded.isError, JSON.stringify(loaded));
     assert.equal(JSON.parse(loaded.content[0].text).origin, "fixture-host");
+    const markdown = "---\nname: new-flow\ndescription: New workflow\n---\nOriginal\n";
+    const call = (name, args) => client.callTool({ name, arguments: args });
+    const created = await call("create_skill", { name: "new-flow", markdown });
+    assert.ok(!created.isError, JSON.stringify(created));
+    const { uri, digest } = JSON.parse(created.content[0].text);
+    const changed = markdown.replace("Original", "Updated");
+    assert.equal((await call("update_skill", { uri, expected_digest: digest, markdown: changed })).isError, true, "bridge requires verified load");
+    const first = JSON.parse((await call("load_skill", { uri })).content[0].text);
+    assert.equal(first.digest, digest);
+    assert.ok(!(await call("update_skill", { uri, expected_digest: first.digest, markdown: changed })).isError);
+    assert.equal((await call("read_skill_file", { skill_uri: uri, uri })).isError, true, "old manifest must fail verification");
+    const second = JSON.parse((await call("load_skill", { uri })).content[0].text);
+    assert.equal(second.changed, true);
+    assert.equal(second.markdown, changed);
+    assert.equal((await call("update_skill", { uri, expected_digest: first.digest, markdown })).isError, true);
   } finally { await client.close(); await rm(root, { recursive: true, force: true }); }
 });

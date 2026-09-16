@@ -63,6 +63,16 @@ To be listed, a skill needs `SKILL.md` frontmatter with `name` and `description`
 
 The `skills_list`, `skills_get`, and `resources_read` tools are kept as a compatibility layer for older clients.
 
+Trusted stdio/SSH connections also expose `create_skill` and `update_skill`:
+
+- `create_skill({name, markdown, source?})` creates a top-level package with a complete YAML-frontmatter SKILL.md. The default source is the first configured root (`gisul` with default settings). Existing directories are never replaced.
+- `update_skill({uri, markdown, expected_digest})` replaces only an existing SKILL.md, including nested skills. Use the exact canonical URI and `sha256:…` digest from the resource manifest (or Codex `load_skill.digest`). Supporting files are preserved. Reload and reconcile after a conflict.
+- Names for new skills use lowercase letters, digits and hyphens, up to 64 characters. Frontmatter name must match the directory and description must be nonempty. Package size limits still apply.
+- Updates reject symlinked skill paths. Atomic replacement avoids partial files; a per-root filesystem lock serializes cooperating SSH processes and digest checks prevent lost edits. External filesystem editors do not participate in this lock. If a process is terminated while holding `.gisul-write-lock`, an operator must verify no writer is active before removing that directory.
+- HTTP remains read-only, including for existing bearer tokens. No new privileges are granted to issued HTTP clients. Writes store instruction text; they never execute it.
+
+The Codex bridge exposes the same write tools. It requires `load_skill` before updates and retains manifest verification, so reread with `load_skill` after a successful write.
+
 Set `GISUL_ROOT` or colon-delimited `GISUL_SKILLS_DIRS` on the remote command to override the default roots.
 
 When serving through a public tunnel, set `GISUL_ALLOWED_HOSTS` to include the tunnel hostname:

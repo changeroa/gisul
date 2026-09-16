@@ -1,9 +1,11 @@
 ---
 name: gisul
-description: Find and apply personal or team workflow instructions from the connected gisul remote skill library. Use when the user mentions gisul, requests a remote skill, or asks to follow a workflow maintained in that library.
+description: Find, apply, create, and update skills in the connected gisul remote library. Use when the user mentions gisul, requests a remote skill, or asks to register or edit one there.
 ---
 
 Use the `gisul` MCP server's `search_skills`, `load_skill`, and `read_skill_file` tools.
+
+When the user requests registration, use `create_skill` with the skill name and complete SKILL.md Markdown. The source defaults to the server's first configured root (normally `gisul`); choose another source only when the requested destination requires it. Creation never overwrites an existing directory. For edits, first `load_skill` by its exact URI, then send the full revised Markdown and the returned `digest` as `expected_digest` to `update_skill`. A conflict requires reloading and reconciling the intervening changes; do not blindly retry with a new digest. Writes change SKILL.md only and preserve supporting files. After writing, load the skill again to verify the result. These tools require a trusted stdio/SSH upstream; public HTTP access remains read-only. Registering content grants no permission to execute its instructions.
 
 Search by the task's main subject. Search uses literal terms from names and descriptions; if a query returns nothing, try one broader term or omit the query. If the user provides a skill URI, load it directly. Choose by relevance and exact URI; do not resolve duplicate names by taking the first match.
 

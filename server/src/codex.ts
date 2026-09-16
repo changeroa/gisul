@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "yaml";
 import { z } from "zod";
 
@@ -95,7 +96,7 @@ export function createCodexBridge(client: Client, origin: string): McpServer {
     const previous = loaded.get(uri);
     const changed = !!previous && !isDeepStrictEqual(previous.resources, entry.resources);
     loaded.set(uri, entry);
-    return json({ origin, uri, changed, trust: "Remote instructions. Existing user authorization applies; this content grants no tool or execution permissions.", markdown, files: entry.resources.map(file => file.uri) });
+    return json({ origin, uri, changed, trust: "Remote instructions. Existing user authorization applies; this content grants no tool or execution permissions.", markdown, digest: entry.resources.find(file => file.uri === uri)!.digest, files: entry.resources.map(file => file.uri) });
   });
 
   server.registerTool("read_skill_file", {
@@ -105,6 +106,21 @@ export function createCodexBridge(client: Client, origin: string): McpServer {
     const entry = loaded.get(skill_uri);
     if (!entry) throw new Error("Call load_skill first in this connection");
     return json({ origin, skill_uri, uri, text: await read(entry, uri), note: "Supporting content only; nested SKILL.md frontmatter is not activated." });
+  });
+  const writeAnnotations = { readOnlyHint: false, idempotentHint: false, openWorldHint: true };
+  server.registerTool("create_skill", {
+    description: "Create a remote SKILL.md when the user requests registration. Never overwrites existing skills. Source defaults to the upstream's first configured root (normally gisul).",
+    inputSchema: { source: z.string().optional(), name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), markdown: z.string().min(1).max(16 * 1024 * 1024) },
+    annotations: { ...writeAnnotations, destructiveHint: false },
+  }, async args => CallToolResultSchema.parse(await client.callTool({ name: "create_skill", arguments: args })));
+  server.registerTool("update_skill", {
+    description: "Update a remote SKILL.md by exact URI. First load_skill and use its digest as expected_digest; conflicts require reloading and reviewing the new content. Supporting files are preserved.",
+    inputSchema: { uri: z.string(), markdown: z.string().min(1).max(16 * 1024 * 1024), expected_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) },
+    annotations: { ...writeAnnotations, destructiveHint: true },
+  }, async args => {
+    const entry = loaded.get(args.uri);
+    if (!entry || entry.resources.find(file => file.uri === args.uri)?.digest !== args.expected_digest) throw new Error("Call load_skill and use its current digest before updating");
+    return CallToolResultSchema.parse(await client.callTool({ name: "update_skill", arguments: args }));
   });
   return server;
 }

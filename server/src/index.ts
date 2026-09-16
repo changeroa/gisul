@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -730,7 +730,90 @@ function registerGisulTools(server: McpServer): void {
   );
 }
 
-function createGisulServer(): McpServer {
+const skillNameSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64);
+const skillMarkdownSchema = z.string().min(1).max(MAX_RESOURCE_BYTES);
+
+function validateSkillMarkdown(markdown: string, name: string): void {
+  const frontmatter = parseSkillFrontmatter(markdown);
+  if (!frontmatter || frontmatter.name !== name || typeof frontmatter.description !== "string" || !frontmatter.description.trim()) {
+    throw new Error("SKILL.md requires matching name and a nonempty description in YAML frontmatter");
+  }
+  if (Buffer.byteLength(markdown) > MAX_RESOURCE_BYTES) throw new Error("Skill exceeds the byte limit");
+}
+
+async function withSkillWriteLock<T>(source: string, action: (root: string) => Promise<T>): Promise<T> {
+  const configured = SKILL_ROOTS.find(root => root.id === source);
+  if (!configured) throw new Error(`Unknown skill source: ${source}`);
+  await mkdir(configured.dir, { recursive: true });
+  const root = await realpath(configured.dir);
+  const lock = path.join(root, ".gisul-write-lock");
+  try { await mkdir(lock); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Skill root is busy; reload and retry. A stale .gisul-write-lock requires operator inspection.");
+    throw error;
+  }
+  try { return await action(root); } finally { await rm(lock, { recursive: true }); }
+}
+
+async function assertRegularSkillPath(root: string, segments: string[]): Promise<string> {
+  let current = root;
+  for (const [index, segment] of segments.entries()) {
+    current = path.join(current, segment);
+    const info = await lstat(current);
+    if (info.isSymbolicLink() || (index === segments.length - 1 ? !info.isFile() : !info.isDirectory())) {
+      throw new Error("Writes require regular files and directories; symbolic links are not writable");
+    }
+  }
+  return current;
+}
+
+function registerSkillWriteTools(server: McpServer): void {
+  server.registerTool("create_skill", {
+    description: "Create a new top-level SKILL.md in a served source. Never overwrites an existing directory. Available over trusted stdio/SSH only.",
+    inputSchema: { source: z.string().default(SKILL_ROOTS[0].id), name: skillNameSchema, markdown: skillMarkdownSchema },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ source, name, markdown }) => {
+    validateSkillMarkdown(markdown, name);
+    return withSkillWriteLock(source, async root => {
+      const destination = path.join(root, name);
+      try { await lstat(destination); throw new Error("Skill directory already exists; load it and use update_skill"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      const staging = await mkdtemp(path.join(root, ".gisul-create-"));
+      try {
+        await writeFile(path.join(staging, "SKILL.md"), markdown, { flag: "wx", mode: 0o600 });
+        await rename(staging, destination);
+      } finally { await rm(staging, { recursive: true, force: true }); }
+      return asJsonText({ uri: skillUri(source, name, "SKILL.md"), digest: `sha256:${sha256(markdown)}`, created: true });
+    });
+  });
+  server.registerTool("update_skill", {
+    description: "Replace an existing SKILL.md by exact URI and expected SHA-256 digest. Preserves supporting files and rejects stale edits. Trusted stdio/SSH only.",
+    inputSchema: { uri: z.string(), markdown: skillMarkdownSchema, expected_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, async ({ uri, markdown, expected_digest }) => {
+    const parsed = parseSkillUriSegments(uri);
+    if (!parsed || parsed.pathSegments.length < 2 || parsed.pathSegments.at(-1) !== "SKILL.md" || uri !== skillUri(parsed.source, ...parsed.pathSegments)) {
+      throw new Error("Expected an exact canonical SKILL.md URI served by this authority");
+    }
+    const name = parsed.pathSegments.at(-2)!;
+    validateSkillMarkdown(markdown, name);
+    return withSkillWriteLock(parsed.source, async root => {
+      const target = await assertRegularSkillPath(root, parsed.pathSegments);
+      const previous = await readFile(target);
+      if (`sha256:${createHash("sha256").update(previous).digest("hex")}` !== expected_digest) throw new Error("Skill changed; load_skill again before editing");
+      const entry = await buildSkillEntry(parsed.source, root, parsed.pathSegments.slice(0, -1).join("/"));
+      if (!entry) throw new Error("Existing skill is not a valid served skill");
+      if (entry.resources.reduce((sum, item) => sum + item.size, 0) - previous.length + Buffer.byteLength(markdown) > MAX_SKILL_TOTAL_BYTES) throw new Error("Skill package exceeds the byte limit");
+      const temporary = path.join(path.dirname(target), `.gisul-update-${randomBytes(12).toString("hex")}`);
+      try {
+        await writeFile(temporary, markdown, { flag: "wx", mode: (await stat(target)).mode & 0o777 });
+        await rename(temporary, target);
+      } finally { await rm(temporary, { force: true }); }
+      return asJsonText({ uri, digest: `sha256:${sha256(markdown)}`, updated: true });
+    });
+  });
+}
+
+function createGisulServer(writable = false): McpServer {
   const server = new McpServer(
     {
       name: "gisul",
@@ -746,6 +829,7 @@ function createGisulServer(): McpServer {
     },
   );
   registerGisulTools(server);
+  if (writable) registerSkillWriteTools(server);
   registerSkillsExtension(server);
   return server;
 }
@@ -1023,7 +1107,7 @@ async function showDashboard(req: Request, res: Response, adminToken: string | u
 }
 
 async function startStdio(): Promise<void> {
-  const server = createGisulServer();
+  const server = createGisulServer(true);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -1105,12 +1189,13 @@ async function startHttp(): Promise<void> {
     res.status(405).set("Allow", "POST").send("Method Not Allowed");
   });
 
-  app.listen(port, host, (error?: Error) => {
+  const listener = app.listen(port, host, (error?: Error) => {
     if (error) {
       console.error("Failed to start HTTP MCP server:", error);
       process.exit(1);
     }
-    console.error(`gisul listening on http://${host}:${port}/mcp`);
+    const address = listener.address();
+    console.error(`gisul listening on http://${host}:${typeof address === "object" && address ? address.port : port}/mcp`);
   });
 }
 
