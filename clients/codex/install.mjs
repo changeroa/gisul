@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
+if (args.includes("--plugin")) {
+  const { installPlugin } = await import("./install-plugin.mjs");
+  await installPlugin(args.filter(arg => arg !== "--plugin"));
+  process.exit(0);
+}
 const dryRun = args[0] === "--dry-run";
 if (dryRun) args.shift();
 const host = args.shift() ?? "macmini";

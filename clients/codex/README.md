@@ -1,7 +1,7 @@
 # Codex plugin
 
-Gisul's Codex adapter exposes three tools: `search_skills`, `load_skill`, and
-`read_skill_file`. A small local `$gisul` skill teaches Codex when and how to use
+Gisul's Codex adapter exposes `search_skills`, `load_skill`, `read_skill_file`,
+`create_skill`, and `update_skill`. A small local `$gisul` skill teaches Codex when and how to use
 them. Remote skills stay remote; the catalog is not copied into local skill folders.
 
 ## Plugin setup
@@ -38,10 +38,29 @@ For another SSH host, edit both the origin label and SSH host in the plugin's
 `.mcp.json` before publishing. Its `cwd: "."` resolves to the installed plugin
 directory. On machines outside the Homebrew/Linux standard paths, adjust PATH.
 
-For local plugin updates, rebuild, copy the built tree to the personal plugin
-source, update its version cachebuster, and run `codex plugin add gisul@personal`
-again. New threads pick up the new tools and skills. The plugin-creator skill's
-cachebuster helper can perform the version update.
+For updates to an existing personal-marketplace installation:
+
+```bash
+node clients/codex/install.mjs --plugin --dry-run macmini
+node clients/codex/install.mjs --plugin macmini
+```
+
+The installer discovers the source through `codex plugin list`, rebuilds the
+bundle, uses the plugin-creator helpers to validate the marketplace and update
+the version cachebuster, and runs `codex plugin add gisul@<marketplace>`. It keeps
+a source backup beside the existing plugin. It then checks the selected version,
+enabled state, exact cache file bytes, and fresh MCP discovery/pagination/reads.
+Cache, `config.toml`, and marketplace files are managed by Codex's CLI. New
+threads pick up the updated tools and skills; a running thread keeps its existing
+MCP connection. `codex plugin list --json` reports plugin versions; `codex mcp list`
+is not the plugin-version registry.
+
+This update path requires an existing local source in the default personal
+marketplace and the plugin-creator skill at
+`${CODEX_HOME:-~/.codex}/skills/.system/plugin-creator`. Set `GISUL_PLUGIN_CREATOR`
+if that skill is elsewhere. It refuses a competing standalone MCP registration.
+After an ambiguous install failure it re-queries the selected version before
+reporting an error; inspect that result and the printed backup before retrying.
 
 Check the actual installed bundle and upstream together:
 

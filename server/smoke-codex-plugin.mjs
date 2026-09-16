@@ -14,8 +14,13 @@ try {
   };
   const found = parseResult(await client.callTool({ name: "search_skills", arguments: { limit: 1 } }));
   if (!found.skills.length) throw new Error("No skills returned from upstream");
+  if (found.totalMatches > 1) {
+    if (found.nextOffset !== 1) throw new Error("Outdated bridge: search_skills did not return nextOffset");
+    const next = parseResult(await client.callTool({ name: "search_skills", arguments: { limit: 1, offset: found.nextOffset } }));
+    if (next.offset !== 1 || next.skills[0]?.uri === found.skills[0].uri) throw new Error("Bridge pagination did not advance");
+  }
   const loaded = parseResult(await client.callTool({ name: "load_skill", arguments: { uri: found.skills[0].uri } }));
   const reread = parseResult(await client.callTool({ name: "read_skill_file", arguments: { skill_uri: loaded.uri, uri: loaded.uri } }));
   if (loaded.markdown !== reread.text) throw new Error("Read mismatch");
-  console.log(JSON.stringify({ origin: found.origin, matches: found.totalMatches, loaded: loaded.uri, verifiedRead: true }));
+  console.log(JSON.stringify({ origin: found.origin, matches: found.totalMatches, nextOffset: found.nextOffset, loaded: loaded.uri, verifiedRead: true }));
 } finally { await client.close(); }
