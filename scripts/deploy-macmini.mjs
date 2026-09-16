@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,12 +34,10 @@ const stage = `${root}/.deploy/stage-${id}`;
 const local = await mkdtemp(join(tmpdir(), "gisul-deploy-"));
 try {
   const payload = join(local, "server");
-  // Stage only versioned sources and the just-built output, never ignored local files.
-  for (const path of git("ls-files", "-z", "--", "server").split("\0").filter(Boolean)) {
-    const target = join(payload, path.slice("server/".length));
-    await mkdir(dirname(target), { recursive: true });
-    await cp(join(repo, path), target);
-  }
+  // Archive the validated commit so later edits cannot change the staged source.
+  const archive = join(local, "source.tar");
+  run("git", ["archive", "--format=tar", `--output=${archive}`, commit, "server"]);
+  run("tar", ["-xf", archive, "-C", local]);
   await cp(join(repo, "server/dist"), join(payload, "dist"), { recursive: true });
   const files = await inventory(payload);
   const artifact = createHash("sha256").update(JSON.stringify(files)).digest("hex");

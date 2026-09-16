@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, constants, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -108,9 +108,22 @@ async function main() {
     }
     throw new Error("HTTP health check failed");
   };
+  const restart = async () => {
+    try { run("launchctl", ["kickstart", "-k", service], { timeout: 15000 }); }
+    catch {
+      // Re-query after an ambiguous restart; a failed spawn can leave kickstart waiting.
+      run("launchctl", ["print", service], { timeout: 5000 });
+      console.error("kickstart failed or timed out; reloading the same LaunchAgent");
+      run("launchctl", ["bootout", service], { timeout: 15000 });
+      run("launchctl", ["bootstrap", `gui/${process.getuid()}`, plist], { timeout: 15000 });
+    }
+  };
   const result = await deploy(config, {
-    prepare: async stage => { run("npm", ["ci", "--omit=dev", "--ignore-scripts"], { cwd: stage }); },
-    restart: async () => { run("launchctl", ["kickstart", "-k", service]); },
+    prepare: async stage => {
+      await access(join(stage, "bin/gisul"), constants.X_OK);
+      run("npm", ["ci", "--omit=dev", "--ignore-scripts"], { cwd: stage, timeout: 180000 });
+    },
+    restart,
     recoveryCheck: health,
     smoke: async current => {
       await health();

@@ -24,6 +24,11 @@ the Cloudflare tunnel are outside the deployment. Existing stdio sessions retain
 their running process; fresh sessions use the new build. The HTTP LaunchAgent is
 restarted with `launchctl kickstart`.
 
+The launcher must have its executable bit committed. Deployment checks it before
+activation. `kickstart` has a 15-second timeout; on failure the script re-queries
+the service and reloads the same LaunchAgent with `bootout`/`bootstrap` to clear
+macOS spawn throttling. Other LaunchAgents are not restarted.
+
 Smoke checks initialize the actual server over stdio, verify the skills extension,
 exercise bridge pagination (`nextOffset`), load and verify a skill, and compare the
 authenticated HTTP catalog with stdio. At least two valid skills are required.
