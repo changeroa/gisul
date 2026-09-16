@@ -24,6 +24,12 @@ export async function verifyInstalled(list, marketplace, version, source, codexH
   return cache;
 }
 
+export function isPluginTransport(registration, installed, marketplace, codexHome) {
+  const plugin = installed.find(item => item.pluginId === `gisul@${marketplace}`);
+  const cwd = registration.transport?.cwd;
+  return !!plugin?.version && typeof cwd === "string" && resolve(cwd) === resolve(codexHome, "plugins/cache", marketplace, "gisul", plugin.version);
+}
+
 export async function installPlugin(args) {
   const dryRun = args.includes("--dry-run");
   const positional = args.filter(arg => arg !== "--dry-run");
@@ -33,14 +39,15 @@ export async function installPlugin(args) {
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
   const helpers = process.env.GISUL_PLUGIN_CREATOR ?? join(codexHome, "skills/.system/plugin-creator");
   const run = (command, commandArgs, options = {}) => {
-    const result = spawnSync(command, commandArgs, { cwd: repo, encoding: "utf8", stdio: "pipe", ...options });
+    const result = spawnSync(command, commandArgs, { cwd: repo, encoding: "utf8", stdio: "pipe", timeout: 120000, ...options });
     if (result.error || result.status !== 0) throw new Error(`${command} failed (${result.status}): ${result.error ?? result.stderr ?? "see command output"}`);
     return result.stdout?.trim();
   };
   const helper = (name, ...values) => run("python3", [join(helpers, "scripts", name), ...values]);
   const marketplace = helper("read_marketplace_name.py");
   const list = () => JSON.parse(run("codex", ["plugin", "list", "--marketplace", marketplace, "--available", "--json"]));
-  const source = await realpath(pluginSource(list(), marketplace));
+  const before = list();
+  const source = await realpath(pluginSource(before, marketplace));
   if (basename(source) !== "gisul") throw new Error("The resolved plugin directory must be named gisul");
   const previous = JSON.parse(await readFile(join(source, ".codex-plugin/plugin.json"), "utf8"));
   if (previous.name !== "gisul") throw new Error("The source manifest must identify gisul");
@@ -51,7 +58,8 @@ export async function installPlugin(args) {
   }
   const standalone = spawnSync("codex", ["mcp", "get", "gisul", "--json"], { encoding: "utf8" });
   if (standalone.error) throw standalone.error;
-  if (standalone.status === 0) throw new Error("A standalone gisul MCP registration exists; resolve the duplicate before installing the plugin");
+  // Recent Codex versions also return plugin-provided servers from `mcp get`.
+  if (standalone.status === 0 && !isPluginTransport(JSON.parse(standalone.stdout), before.installed, marketplace, codexHome)) throw new Error("A standalone gisul MCP registration exists; resolve the duplicate before installing the plugin");
   const work = await mkdtemp(join(tmpdir(), "gisul-plugin-build-"));
   const stage = join(work, "gisul");
   let backup;

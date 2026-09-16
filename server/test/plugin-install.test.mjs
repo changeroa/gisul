@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pluginSource, verifyInstalled } from "../../clients/codex/install-plugin.mjs";
+import { isPluginTransport, pluginSource, verifyInstalled } from "../../clients/codex/install-plugin.mjs";
 
 test("plugin updates require one confirmed local marketplace source", () => {
   const local = { pluginId: "gisul@personal", source: { source: "local", path: "/plugins/gisul" } };
   assert.equal(pluginSource({ installed: [local] }, "personal"), "/plugins/gisul");
   for (const entries of [[], [{ ...local, source: { source: "github", path: "/plugins/gisul" } }], [local, { ...local, source: { source: "local", path: "/another/gisul" } }]]) {
     assert.throws(() => pluginSource({ installed: entries }, "personal"), /one confirmed local/);
+  }
+});
+
+test("plugin-provided mcp get results are distinguished from standalone registrations", () => {
+  const installed = [{ pluginId: "gisul@personal", version: "1.0.0" }];
+  assert.equal(isPluginTransport({ transport: { cwd: "/codex/plugins/cache/personal/gisul/1.0.0/." } }, installed, "personal", "/codex"), true);
+  for (const cwd of [undefined, "/repo/server", "/codex/plugins/cache/personal/gisul/old", "/codex/plugins/cache/personal/gisul/1.0.0-extra"]) {
+    assert.equal(isPluginTransport({ transport: { cwd } }, installed, "personal", "/codex"), false);
   }
 });
 
