@@ -6,7 +6,7 @@ The Worker in this checkout serves `/mcp` directly from `SKILLS_BUCKET`. It has 
 
 The production machine endpoint is `https://gisul-mcp.changeroa.workers.dev/mcp`; the publication origin is the same URL without `/mcp`. Its stable workers.dev route is enabled on the existing Worker, with bearer authentication enforced by the Worker. The custom domain `gisul.iyendev.com` also routes to this version, but its zone can return a browser challenge to unattended clients. GitHub Actions and the installed plugin use the stable workers.dev endpoint. Do not depend on a preview alias for ongoing publication or disable security across unrelated zone traffic.
 
-The runtime and local integration tests are implemented here. Production activation still requires the skill repository's existing builder and behavioral evaluation gate to be connected, a real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Local fixture tests do not establish those production results.
+Production activation requires a gated real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Structural migration of unchanged content uses Git-byte and manifest parity; behavioral changes retain the skill repository's separate model evaluation requirements. Local fixture tests do not establish those production results.
 
 ### Release contract
 
