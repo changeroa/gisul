@@ -173,11 +173,13 @@ test("publication verifies the whole release before switching and rollback prese
   const { bucket, publish, rpc } = await fixture(t);
   const a = await release(bucket, "a", false), b = await release(bucket, "b", false);
   assert.equal((await rpc("skills/get", { uri, _meta: { "io.gisul/commit": a.identity.commit } })).body.error.code, -32602);
+  assert.equal((await publish(`/admin/releases/${a.identity.commit}`, undefined, "GET")).status, 404);
   const firstInput = { ...a.identity, expected_etag: null, sequence: 1 };
   const initial = await publish("/admin/promote", firstInput);
   assert.equal(initial.status, 200, JSON.stringify(initial));
   const first = (await publish("/admin/current", undefined, "GET")).body;
   assert.equal(first.current.commit, a.identity.commit);
+  assert.deepEqual((await publish(`/admin/releases/${a.identity.commit}`, undefined, "GET")).body, a.identity);
   const unverifiedRollback = await publish("/admin/rollback", { ...b.identity, expected_etag: first.etag, sequence: 2 });
   assert.equal(unverifiedRollback.status, 404, JSON.stringify(unverifiedRollback));
   assert.equal(await bucket.get(`releases/${b.identity.commit}/complete.json`), null);
@@ -219,6 +221,20 @@ test("simultaneous verified HTTP publications cannot both switch current", async
   const current = (await publish("/admin/current", undefined, "GET")).body.current;
   assert.equal(current.revision, 1);
   assert.equal(current.commit, results.find(result => result.status === 200).body.commit);
+});
+
+test("verified candidates can be read by pin before any current-pointer change", async t => {
+  const { bucket, publish, rpc } = await fixture(t);
+  const candidate = await release(bucket, "a", false);
+  const input = { ...candidate.identity, expected_etag: null, sequence: 1 };
+  const checked = await publish("/admin/verify", input);
+  assert.equal(checked.status, 200, JSON.stringify(checked));
+  assert.deepEqual(checked.body, candidate.identity);
+  assert.equal((await publish("/admin/current", undefined, "GET")).body.current, null);
+  const pinned = await rpc("resources/read", { uri, _meta: { "io.gisul/commit": candidate.identity.commit } });
+  assert.equal(pinned.body.result.contents[0].text, candidate.markdown);
+  assert.equal((await rpc("skills/list")).body.error.code, -32603);
+  assert.equal((await publish("/admin/promote", input)).status, 200);
 });
 
 test("publication rejects misleading frontmatter even when all file digests match", async t => {

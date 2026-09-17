@@ -15,11 +15,13 @@ Upload `inventory.json` first. It fixes the allowed paths and their bytes for th
 | Publication endpoint | Method | Purpose |
 | --- | --- | --- |
 | `/admin/current` | GET | Read current identity and its ETag |
+| `/admin/releases/<commit>` | GET | Read a completed release's identity for rollback |
 | `/admin/releases/<commit>/<path>` | PUT | Upload an immutable object |
+| `/admin/verify` | POST | Complete verification without switching current; supports staged reads by commit |
 | `/admin/promote` | POST | Verify and activate a release |
 | `/admin/rollback` | POST | Verify and reactivate a retained release |
 
-Promotion and rollback accept `commit`, `release`, `inventory_digest`, `expected_etag` (null only for the first publication), and a positive integer `sequence`. The inventory digest hashes its exact uploaded bytes. Verification checks the builder's per-skill manifest digests, SKILL.md frontmatter, every stored object's size and digest, and the complete object inventory before creating the completion marker. Rollback requires an existing completion marker from a previously verified promotion and rechecks the retained bytes. Only then does a conditional write replace `current.json`. R2's [conditional writes and consistency guarantees](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations) provide the storage primitive; tests exercise its concurrent behavior in the local Worker runtime.
+Verification, promotion and rollback accept `commit`, `release`, `inventory_digest`, `expected_etag` (null only for the first publication), and a positive integer `sequence`. The inventory digest hashes its exact uploaded bytes. Verification checks the builder's per-skill manifest digests, SKILL.md frontmatter, every stored object's size and digest, and the complete object inventory before creating the completion marker. `/admin/verify` leaves current unchanged so the publisher can exercise authenticated MCP reads pinned to the candidate before activation. Rollback requires an existing completion marker and rechecks the retained bytes. Only a successful promotion or rollback conditionally replaces `current.json`. R2's [conditional writes and consistency guarantees](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations) provide the storage primitive; tests exercise its concurrent behavior in the local Worker runtime.
 
 The pointer records a revision and the highest promotion sequence/commit. Rollback preserves that high-water mark. A delayed lower-sequence publication cannot undo a newer release or a rollback. Retrying a verified release that is already current returns its existing revision. After any uncertain write outcome, reread `/admin/current` before retrying.
 

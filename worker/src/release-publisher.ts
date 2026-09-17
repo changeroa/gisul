@@ -15,7 +15,7 @@ function equalMetadata(a: unknown, b: unknown): boolean {
   return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && equalMetadata(left[key], right[key]));
 }
 
-export async function publishRelease(bucket: R2Bucket, input: PublishRequest, operation: "promote" | "rollback"): Promise<CurrentRelease> {
+export async function publishRelease(bucket: R2Bucket, input: PublishRequest, operation: "promote" | "rollback" | "verify"): Promise<CurrentRelease | ReleaseIdentity> {
   const identity: ReleaseIdentity = { commit: input.commit, release: input.release, inventory_digest: input.inventory_digest };
   // Rollback cannot turn an unverified upload into a completed release.
   const snapshot = operation === "rollback" ? await readSnapshot(bucket, identity.commit) : await readInventory(bucket, identity);
@@ -41,7 +41,8 @@ export async function publishRelease(bucket: R2Bucket, input: PublishRequest, op
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
     if (!match || !equalMetadata(parse(match[1]), frontmatter)) throw new ReleaseError("SKILL.md frontmatter differs from the inventory");
   });
-  if (operation === "promote") await putImmutableObject(bucket, identity.commit, "complete.json", new TextEncoder().encode(JSON.stringify(identity)).buffer);
+  if (operation !== "rollback") await putImmutableObject(bucket, identity.commit, "complete.json", new TextEncoder().encode(JSON.stringify(identity)).buffer);
+  if (operation === "verify") return identity;
   const current = await readCurrent(bucket);
   if (current && current.value.commit === identity.commit && current.value.inventory_digest === identity.inventory_digest && current.value.release === identity.release) return current.value;
   return switchCurrent(bucket, identity, input.expected_etag, input.sequence, operation);
@@ -55,6 +56,10 @@ export async function publisherFetch(request: Request, env: PublisherEnv): Promi
     if (url.pathname === "/admin/current" && request.method === "GET") {
       const current = await readCurrent(env.SKILLS_BUCKET);
       return jsonResponse(request, { current: current?.value ?? null, etag: current?.etag ?? null });
+    }
+    const retained = /^\/admin\/releases\/([a-f0-9]{40})$/.exec(url.pathname);
+    if (retained && request.method === "GET") {
+      return jsonResponse(request, (await readSnapshot(env.SKILLS_BUCKET, retained[1])).identity);
     }
     const upload = /^\/admin\/releases\/([a-f0-9]{40})\/(.+)$/.exec(url.pathname);
     if (upload && request.method === "PUT") {
@@ -78,11 +83,12 @@ export async function publisherFetch(request: Request, env: PublisherEnv): Promi
       const result = await putImmutableObject(env.SKILLS_BUCKET, upload[1], relative, bytes);
       return jsonResponse(request, result, result.created ? 201 : 200);
     }
-    if (["/admin/promote", "/admin/rollback"].includes(url.pathname) && request.method === "POST") {
+    if (["/admin/promote", "/admin/rollback", "/admin/verify"].includes(url.pathname) && request.method === "POST") {
       const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBody(request, 64 * 1024))) as PublishRequest;
       assertCommit(body?.commit);
       if (typeof body.release !== "string" || !body.release || typeof body.inventory_digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(body.inventory_digest) || (body.expected_etag !== null && typeof body.expected_etag !== "string") || !Number.isSafeInteger(body.sequence) || body.sequence < 1) throw new ReleaseError("Invalid publication request", 400);
-      const result = await publishRelease(env.SKILLS_BUCKET, body, url.pathname.endsWith("rollback") ? "rollback" : "promote");
+      const operation = url.pathname.endsWith("rollback") ? "rollback" : url.pathname.endsWith("verify") ? "verify" : "promote";
+      const result = await publishRelease(env.SKILLS_BUCKET, body, operation);
       return jsonResponse(request, result);
     }
     return jsonResponse(request, { error: "Not Found" }, 404);
