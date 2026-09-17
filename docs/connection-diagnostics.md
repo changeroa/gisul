@@ -68,16 +68,29 @@ proves that cause. Evidence: `implementation/mvp-closure/isolated-sshd.jsonl`.
 
 At 11:15 KST, a separate diagnostic attempted to restart the default macOS
 `system/com.openssh.sshd` service. An independent launchd rescue job was armed
-before the attempt. Even under sudo, `launchctl bootout` returned exit 1,
-`Operation not permitted`. The service remained loaded; the rescue job found
-no restoration necessary. Existing and fresh bridge calls both succeeded, but
-this was **not an executed shared-service restart**. The task-owned restart and
-rescue jobs were removed after their journals were saved. No OS protection was
-changed. Evidence: `implementation/mvp-closure/default-sshd.jsonl` and
-`implementation/mvp-closure/default-sshd-journals.json`.
+before the attempt. `launchctl bootout` returned exit 1, `Operation not permitted`.
+A later audit found that `sudo launchctl submit` had targeted `gui/501`, where
+the helper ran as UID 501. The initial error is therefore not evidence that a
+root operation was denied by SIP. The service remained loaded throughout.
 
-The sleep observer was stopped before that SSH attempt to keep the scenarios
-separate, then armed again at 11:21 KST with a fresh connection and a new log,
-`implementation/mvp-closure/sleep-wake-20260917-rearmed.jsonl`. Initial search
-and load succeeded. Its deadline is September 18 at 11:21 KST; until a real
+At 11:46 KST, the supported `systemsetup` Remote Login operation was tested with
+each privileged command explicitly using sudo and command UID verified as 0.
+Turning Remote Login off was rejected with "requires Full Disk Access privileges";
+Remote Login stayed On. Existing and fresh bridge search/load calls succeeded.
+No shared-service restart was executed and no privacy permission was changed.
+Evidence: `implementation/mvp-closure/systemsetup-sshd-v2.jsonl` and
+`implementation/mvp-closure/systemsetup-sshd-v2-journals.json`.
+
+The submitted diagnostic jobs also had KeepAlive enabled. A system-domain-only
+cleanup did not remove them. All six task-owned jobs were subsequently booted
+out of their actual GUI domain, and absence was verified in system, user and
+GUI domains while Remote Login remained On. The failed repeated operations did
+not restart SSH. Evidence: `implementation/mvp-closure/remote-jobs-cleanup.json`.
+Future service diagnostics must use an explicit one-shot plist with KeepAlive
+false, verify the execution UID, and record the actual launchd domain.
+
+The sleep observer was paused around SSH diagnostics and finally armed at
+11:47 KST with a fresh connection and a new log,
+`implementation/mvp-closure/sleep-wake-20260917-final.jsonl`. Initial search
+and load succeeded. Its deadline is September 18 at 11:47 KST; until a real
 system Sleep/full-Wake pair is recorded, sleep/resume remains untested.
