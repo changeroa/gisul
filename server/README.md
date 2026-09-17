@@ -63,7 +63,54 @@ To be listed, a skill needs `SKILL.md` frontmatter with `name` and `description`
 
 The `skills_list`, `skills_get`, and `resources_read` tools are kept as a compatibility layer for older clients.
 
-Set `GISUL_ROOT` or colon-delimited `GISUL_SKILLS_DIRS` on the remote command to override the default roots.
+Trusted stdio/SSH connections also expose `create_skill` and `update_skill`:
+
+- `create_skill({name, markdown, source?})` creates a top-level package with a complete YAML-frontmatter SKILL.md. The default source is the first configured root (`gisul` with default settings). Existing directories are never replaced.
+- `update_skill({uri, markdown, expected_digest})` replaces only an existing SKILL.md, including nested skills. Use the exact canonical URI and `sha256:…` digest from the resource manifest (or Codex `load_skill.digest`). Supporting files are preserved. Reload and reconcile after a conflict.
+- Names for new skills use lowercase letters, digits and hyphens, up to 64 characters. Frontmatter name must match the directory and description must be nonempty. Package size limits still apply.
+- Updates reject symlinked skill paths. Atomic replacement avoids partial files; a per-root filesystem lock serializes cooperating SSH processes and digest checks prevent lost edits. External filesystem editors do not participate in this lock. If a process is terminated while holding `.gisul-write-lock`, an operator must verify no writer is active before removing that directory.
+- HTTP remains read-only, including for existing bearer tokens. No new privileges are granted to issued HTTP clients. Writes store instruction text; they never execute it.
+
+The Codex bridge exposes the same write tools. It requires `load_skill` before updates and retains manifest verification, so reread with `load_skill` after a successful write.
+
+Set `GISUL_ROOT` to change the default gisul root, or use explicit source IDs to
+keep existing URIs when moving content:
+
+```sh
+GISUL_SKILL_ROOTS="gisul=/absolute/path/skills;codex=/absolute/path/codex-skills" gisul
+```
+
+`GISUL_SKILL_ROOTS` uses **semicolons** between `id=absolute-directory` entries on
+every platform. IDs must be unique and match `[A-Za-z0-9][A-Za-z0-9_-]*`. Spaces
+and equals signs in directories are supported; semicolons are separators. A root
+may itself be a symlink. Root ordering and directory names do not change source
+IDs such as `skill://gisul/gisul/…`.
+
+The older `GISUL_SKILLS_DIRS` remains supported with platform path delimiters
+(`:` on macOS), but is deprecated because it assigns positional `root0`, `root1`
+IDs. `GISUL_SKILL_ROOTS` takes precedence when both are set and reports that on
+stderr. Malformed named-root configuration fails at startup rather than falling
+back to different URI identities.
+
+### Release identity and URI aliases
+
+The server reads `${GISUL_ROOT}/release.json` on each `skills/list` and
+`skills/get` request (override with `GISUL_RELEASE_FILE`). Responses include
+`_meta.server_version`, and, when a release file exists, `_meta.release` and
+`_meta.commit`. Requests fail if the release changes while being read. A release
+that includes `skills: [{uri, manifest_digest}]` must match the served manifests;
+unreleased changes cannot be reported as that release.
+
+The manifest digest is SHA-256 of JSON containing `{uri, digest, size}` resource
+records sorted by URI with ordinary string comparison. The digest has the
+`sha256:` prefix. A release file may initially omit `skills` for compatibility;
+published content snapshots should always include the manifests.
+
+`${GISUL_ROOT}/aliases.json` (override with `GISUL_ALIASES_FILE`) is an object
+mapping old file-explicit skill URIs to canonical URIs. `skills/get` resolves
+same-server aliases and includes `_meta.movedFrom` when redirected. Alias chains
+are bounded and cycles rejected. Read the returned canonical resource URIs;
+resource reads do not silently redirect old file paths.
 
 When serving through a public tunnel, set `GISUL_ALLOWED_HOSTS` to include the tunnel hostname:
 

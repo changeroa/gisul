@@ -98,6 +98,7 @@ function startServer(skillsDirs) {
   const child = spawn(process.execPath, [DIST], {
     env: {
       ...process.env,
+      GISUL_ROOT: join(skillsDirs[0], ".runtime"),
       GISUL_SKILLS_DIRS: skillsDirs.join(":"),
       GISUL_URI_AUTHORITY: AUTHORITY,
       GISUL_STATE_DIR: join(tmpdir(), `gisul-test-state-${Date.now()}-${Math.random().toString(36).slice(2)}`),
