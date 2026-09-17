@@ -32,14 +32,14 @@ async function main() {
   await writeFile(output, '', { flag: 'wx', mode: 0o600 });
   const log = event => { const line = JSON.stringify({ ts: new Date().toISOString(), ...event }); appendFileSync(output, line+'\n'); if(event.event !== 'stderr')console.log(line); };
   const root=resolve(plugin), config=JSON.parse(await readFile(join(root,'.mcp.json'),'utf8')).mcpServers.gisul;
-  const clients=[];
+  const clients=new Set();
   const connect = async label => {
     const client=new Client({ name:'gisul-sleep-wake-diagnostic', version:'1' });
     const transport=new StdioClientTransport({ ...config, cwd:root, stderr:'pipe' });
     transport.stderr?.on('data',bytes=>log({event:'stderr',label,text:bytes.toString()}));
     client.onerror=error=>log({event:'client-error',label,message:String(error)});
     client.onclose=()=>log({event:'client-close',label});
-    clients.push(client);await client.connect(transport);log({event:'connected',label,bridge_pid:transport.pid});return client;
+    clients.add(client);await client.connect(transport);log({event:'connected',label,bridge_pid:transport.pid});return client;
   };
   const call=async(client,phase,tool,args)=>{
     try {
@@ -50,16 +50,37 @@ async function main() {
     }catch(error){log({event:'call',phase,tool,ok:false,message:String(error)});return null;}
   };
   try {
-    const client=await connect('existing');
-    const search=await call(client,'before','search_skills',{limit:1});
-    const uri=search?.skills?.[0]?.uri;
-    if(!uri || !await call(client,'before','load_skill',{uri}))throw new Error('Baseline failed; sleep observation not armed');
-    const armedAt=Date.now(),deadline=armedAt+seconds*1000;
-    log({event:'armed',plugin:root,deadline:new Date(deadline).toISOString(),note:'Read-only observer; does not put the machine to sleep.'});
-    while(Date.now()<deadline){
+    let client=null,uri,armedAt,deadline,lastProbe;
+    const baseline=async()=>{
+      const next=await connect('existing');
+      try {
+        const search=await call(next,'before','search_skills',{limit:1});
+        const nextUri=search?.skills?.[0]?.uri;
+        if(!nextUri || !await call(next,'before','load_skill',{uri:nextUri}))throw new Error('Baseline failed; sleep observation not armed');
+        client=next;uri=nextUri;armedAt=Date.now();lastProbe=armedAt;deadline??=armedAt+seconds*1000;
+        log({event:'armed',plugin:root,deadline:new Date(deadline).toISOString(),note:'Read-only sleep observer; checks the baseline every 60 seconds and does not suspend the computer.'});
+      }catch(error){await next.close();clients.delete(next);throw error;}
+    };
+    const evidenceNow=()=>{
       const power=spawnSync('/usr/bin/pmset',['-g','log'],{encoding:'utf8',timeout:15000,maxBuffer:32*1024*1024});
       if(power.error || power.status!==0)throw new Error('Cannot read power transition evidence');
-      const evidence=sleepWakeEvidence(power.stdout,armedAt);
+      return sleepWakeEvidence(power.stdout,armedAt);
+    };
+    await baseline();
+    while(Date.now()<deadline){
+      if(!client){
+        try{await baseline();}catch(error){log({event:'rearm-failed',message:String(error)});await new Promise(resolve=>setTimeout(resolve,Math.min(30000,Math.max(0,deadline-Date.now()))));continue;}
+      }
+      let evidence=evidenceNow();
+      if(!evidence && Date.now()-lastProbe>=60000){
+        const healthy=await call(client,'baseline-check','search_skills',{limit:1});lastProbe=Date.now();
+        // A suspended request may return after wake; preserve that bridge for the diagnostic.
+        evidence=evidenceNow();
+        if(!evidence && !healthy){
+          log({event:'baseline-lost',note:'Connection failed before a recorded sleep/wake; rearm instead of attributing it to sleep.'});
+          const old=client;client=null;await old.close();clients.delete(old);continue;
+        }
+      }
       if(evidence){
         log({event:'sleep-wake-observed',...evidence});
         await call(client,'after-existing','search_skills',{limit:1});

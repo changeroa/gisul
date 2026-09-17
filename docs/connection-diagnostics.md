@@ -18,7 +18,11 @@ To observe an actual MacBook sleep/resume without triggering power changes:
 node diagnose-sleep-wake.mjs /path/to/installed/gisul 86400 /path/to/sleep-wake.jsonl
 ```
 
-The probe first verifies search/load and remains connected. It accepts only a
+The probe first verifies search/load and remains connected. It checks search
+every 60 seconds while awake. If the connection dies before any recorded
+sleep/wake, it creates a fresh baseline instead of attributing that earlier
+failure to sleep. This periodic traffic means it is not the separate idle test.
+It accepts only a
 `pmset` system Sleep followed by a full Wake after arming; sleep-prevention
 assertions, process pauses and maintenance DarkWake do not count. It records
 post-wake calls on the existing bridge and a fresh bridge, then exits. A timeout
@@ -89,8 +93,28 @@ not restart SSH. Evidence: `implementation/mvp-closure/remote-jobs-cleanup.json`
 Future service diagnostics must use an explicit one-shot plist with KeepAlive
 false, verify the execution UID, and record the actual launchd domain.
 
-The sleep observer was paused around SSH diagnostics and finally armed at
+The sleep observer was paused around SSH diagnostics and armed at
 11:47 KST with a fresh connection and a new log,
 `implementation/mvp-closure/sleep-wake-20260917-final.jsonl`. Initial search
 and load succeeded. Its deadline is September 18 at 11:47 KST; until a real
 system Sleep/full-Wake pair is recorded, sleep/resume remains untested.
+
+At 12:05:24 KST that observer's SSH transport received "closed by remote host"
+and "Broken pipe" without a MacBook Sleep/full-Wake transition. A fresh SSH
+connection worked afterward; Mac mini uptime did not indicate a host reboot.
+The available server power and SSH logs did not identify a cause. This is an
+actual unexpected disconnect, but it cannot be attributed to laptop sleep.
+
+At 12:44 KST the observer was replaced with the baseline-checking version;
+`implementation/mvp-closure/sleep-wake-20260917-continuation.jsonl` is the active
+log. Terminating only this diagnostic's SSH child verified that an awake failure
+is recorded as `baseline-lost` and a new successful search/load baseline is
+armed. The deadline remains September 18 at 12:44 KST across reconnections.
+The diagnostic does not add reconnection to the production bridge.
+
+E-03 in PRD §6.1 requires three diagnostic conditions and documented uncertainty.
+The isolated, real Mac mini sshd restart supplies the listener-restart condition;
+the PRD does not require taking down the shared production SSH service. That
+broader service restart remains explicitly unexecuted. The remaining E-03 gate
+is a real laptop Sleep/full-Wake plus the existing/fresh connection results,
+whether those calls succeed or fail. Automatic reconnection is scoped to E-29.
