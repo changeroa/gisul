@@ -9,8 +9,8 @@ them. Remote skills stay remote; the catalog is not copied into local skill fold
 The plugin source is `plugin/gisul/`. Its manifest bundles the local loader and
 an MCP server configuration; the adapter and its npm dependencies are bundled
 into a single JavaScript file. The installed plugin does not depend on this
-checkout or its `node_modules`. It requires Node 22+ and working SSH access to
-the configured `macmini` alias.
+checkout or its `node_modules`. It requires Node 22+ and either an authenticated
+HTTPS MCP endpoint or working SSH access to the configured `macmini` alias.
 
 Build the distributable plugin:
 
@@ -54,6 +54,30 @@ Cache, `config.toml`, and marketplace files are managed by Codex's CLI. New
 threads pick up the updated tools and skills; a running thread keeps its existing
 MCP connection. `codex plugin list --json` reports plugin versions; `codex mcp list`
 is not the plugin-version registry.
+
+For a Cloudflare Worker HTTPS endpoint, keep the bearer credential in an absolute
+local file outside the plugin and repository (owner-readable only):
+
+```sh
+node clients/codex/install.mjs --plugin --dry-run \
+  --http-url https://YOUR_WORKER.workers.dev/mcp \
+  --bearer-token-file /absolute/private/path/gisul-token
+node clients/codex/install.mjs --plugin \
+  --http-url https://YOUR_WORKER.workers.dev/mcp \
+  --bearer-token-file /absolute/private/path/gisul-token
+```
+
+The installed adapter uses Streamable HTTP upstream and starts no SSH process.
+It retains local manifest verification, lazy supporting-file reads and Langfuse
+event evidence. HTTPS exposes only the three read tools; content publication
+continues through the verified Git/release workflow. Credentials are not embedded
+in plugin files or URLs. Redirects are rejected. Plain HTTP is accepted only by
+the runtime on loopback for tests, not by the public endpoint installer.
+
+The existing Worker proxies to `ORIGIN_BASE_URL`: using its URL removes the
+client's SSH dependency but still requires the Mac mini origin and tunnel.
+Hosting the content directly on Cloudflare is a separate storage/deployment
+change. Do not claim the Mac mini is independent merely because the URL is a Worker.
 
 This update path requires an existing local source in the default personal
 marketplace and the plugin-creator skill at

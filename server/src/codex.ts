@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -78,7 +79,7 @@ function visibleFiles(entry: Entry): string[] {
   return [...new Set(entry.resources.map(file => `${root}${file.uri.slice(root.length).split("/")[0]}`))].sort();
 }
 
-export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog): McpServer {
+export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false): McpServer {
   const loaded = new Map<string, Entry>();
   const versions = new Map<string, Metadata>();
   const server = new McpServer({ name: "gisul-codex", version: "0.1.0" }, {
@@ -180,6 +181,7 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     }
     return respond({ origin, skill_uri: entry.uri, uri, ...version, text: await read(entry, uri), note: "Supporting content only; nested SKILL.md frontmatter is not activated." });
   }));
+  if (readOnly) return server;
   const writeAnnotations = { readOnlyHint: false, idempotentHint: false, openWorldHint: true };
   server.registerTool("create_skill", {
     description: "Create a remote SKILL.md when the user requests registration. Never overwrites existing skills. Source defaults to the upstream's first configured root (normally gisul).",
@@ -198,22 +200,40 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   return server;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+type UpstreamOptions = { origin: string } & ({ mode: "stdio"; command: string; args: string[] } | { mode: "http"; url: string; tokenFile: string });
+
+export function parseUpstreamOptions(args: string[]): UpstreamOptions {
+  const usage = "Usage: --origin <label> (-- <command> [args...] | --http-url <https-url> --bearer-token-file <absolute-path>)";
+  if (args[0] !== "--origin" || !args[1]) throw new Error(usage);
   const separator = args.indexOf("--");
-  if (separator !== 2 || args[0] !== "--origin" || !args[1] || !args[3]) throw new Error("Usage: node dist/codex.js --origin <host-label> -- <command> [args...]");
+  if (separator === 2 && args[3]) return { mode: "stdio", origin: args[1], command: args[3], args: args.slice(4) };
+  if (args.length !== 6 || args[2] !== "--http-url" || args[4] !== "--bearer-token-file" || !path.isAbsolute(args[5])) throw new Error(usage);
+  const url = new URL(args[3]);
+  if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Use a credential-free HTTPS endpoint; HTTP is allowed only on loopback for local testing");
+  return { mode: "http", origin: args[1], url: url.href, tokenFile: args[5] };
+}
+
+async function main() {
+  const options = parseUpstreamOptions(process.argv.slice(2));
   const client = new Client({ name: "gisul-codex-reader", version: "0.1.0" });
-  const events = createGisulEventLog(args[1]);
+  const events = createGisulEventLog(options.origin);
   let closing = false;
   client.onclose = () => events.emit({ event: "disconnect", reason: closing ? "shutdown" : "upstream_closed" });
   client.onerror = error => events.emit({ event: "error", operation: "transport", code: eventErrorCode(error) });
-  const transport = new StdioClientTransport({ command: args[3], args: args.slice(4), stderr: "inherit", maxBufferSize: 32 * 1024 * 1024 });
   let server: McpServer | undefined;
   try {
+    let transport;
+    if (options.mode === "http") {
+      const token = (await readFile(options.tokenFile, "utf8")).trim();
+      if (!token || /\s/.test(token)) throw new Error("Bearer token file must contain one nonempty token");
+      transport = new StreamableHTTPClientTransport(new URL(options.url), { requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: "error" } });
+    } else {
+      transport = new StdioClientTransport({ command: options.command, args: options.args, stderr: "inherit", maxBufferSize: 32 * 1024 * 1024 });
+    }
     await client.connect(transport);
-    events.emit({ event: "connect" });
+    events.emit({ event: "connect", transport: options.mode });
     if (!client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]) throw new Error("The upstream gisul is outdated: deploy the SEP-2640 server build first");
-    server = createCodexBridge(client, args[1], events);
+    server = createCodexBridge(client, options.origin, events, options.mode === "http");
     await server.connect(new StdioServerTransport());
     const close = async () => { if (closing) return; closing = true; await server?.close(); await client.close(); await events.flush(); };
     process.stdin.on("end", () => void close());

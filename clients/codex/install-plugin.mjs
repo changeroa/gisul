@@ -30,11 +30,22 @@ export function isPluginTransport(registration, installed, marketplace, codexHom
   return !!plugin?.version && typeof cwd === "string" && resolve(cwd) === resolve(codexHome, "plugins/cache", marketplace, "gisul", plugin.version);
 }
 
+export function pluginConnection(args) {
+  if (args[0] === "--http-url") {
+    if (args.length !== 4 || args[2] !== "--bearer-token-file" || !isAbsolute(args[3])) throw new Error("HTTPS installation requires --http-url <https-url> --bearer-token-file <absolute-path>");
+    const url = new URL(args[1]);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Expected a credential-free HTTPS endpoint");
+    return { mode: "http", endpoint: url.href, tokenFile: args[3], args: ["runtime/codex.mjs", "--origin", url.origin, "--http-url", url.href, "--bearer-token-file", args[3]] };
+  }
+  const host = args[0] ?? "macmini";
+  if (args.length > 1 || !/^[A-Za-z0-9][A-Za-z0-9._@-]*$/.test(host)) throw new Error("Expected one SSH host or --http-url <https-url> --bearer-token-file <absolute-path>");
+  return { mode: "stdio", host, args: ["runtime/codex.mjs", "--origin", host, "--", "ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "gisul"] };
+}
+
 export async function installPlugin(args) {
   const dryRun = args.includes("--dry-run");
   const positional = args.filter(arg => arg !== "--dry-run");
-  const host = positional[0] ?? "macmini";
-  if (positional.length > 1 || !/^[A-Za-z0-9][A-Za-z0-9._@-]*$/.test(host)) throw new Error("Usage: node clients/codex/install.mjs --plugin [--dry-run] [ssh-host]");
+  const connection = pluginConnection(positional);
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
   const helpers = process.env.GISUL_PLUGIN_CREATOR ?? join(codexHome, "skills/.system/plugin-creator");
@@ -53,7 +64,7 @@ export async function installPlugin(args) {
   if (previous.name !== "gisul") throw new Error("The source manifest must identify gisul");
   helper("validate_plugin.py", source);
   if (dryRun) {
-    console.log(JSON.stringify({ marketplace, source, host, command: ["codex", "plugin", "add", `gisul@${marketplace}`, "--json"], verification: "selected version, installed file hashes, fresh MCP smoke" }, null, 2));
+    console.log(JSON.stringify({ marketplace, source, connection, command: ["codex", "plugin", "add", `gisul@${marketplace}`, "--json"], verification: "selected version, installed file hashes, fresh MCP smoke" }, null, 2));
     return;
   }
   const standalone = spawnSync("codex", ["mcp", "get", "gisul", "--json"], { encoding: "utf8" });
@@ -71,7 +82,7 @@ export async function installPlugin(args) {
     const configuration = JSON.parse(await readFile(join(stage, ".mcp.json"), "utf8"));
     const existingConfig = JSON.parse(await readFile(join(source, ".mcp.json"), "utf8"));
     configuration.mcpServers.gisul.env = { ...configuration.mcpServers.gisul.env, ...existingConfig.mcpServers?.gisul?.env };
-    configuration.mcpServers.gisul.args = ["runtime/codex.mjs", "--origin", host, "--", "ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "gisul"];
+    configuration.mcpServers.gisul.args = connection.args;
     await writeFile(join(stage, ".mcp.json"), JSON.stringify(configuration, null, 2) + "\n");
     helper("update_plugin_cachebuster.py", stage);
     helper("validate_plugin.py", stage);
