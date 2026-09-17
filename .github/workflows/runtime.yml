@@ -1,0 +1,35 @@
+name: Runtime validation
+
+on:
+  push:
+    branches: [main, feat/dev-tools-mvp]
+    paths: ['server/**', 'worker/**', 'clients/codex/**', '.github/workflows/runtime.yml']
+  pull_request:
+    paths: ['server/**', 'worker/**', 'clients/codex/**', '.github/workflows/runtime.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            worker/package-lock.json
+      - run: npm --prefix server ci
+      - run: npm --prefix worker ci
+      - run: npm --prefix server run build
+      - run: npm --prefix server test
+      - run: npm --prefix server run build:codex-plugin
+      - run: npm --prefix worker run typecheck
+      - run: npm --prefix worker test
+      - run: npx wrangler versions upload --dry-run
+        working-directory: worker
