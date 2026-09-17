@@ -61,7 +61,7 @@ async function release(bucket, letter, complete = true) {
 }
 
 async function activate(bucket, identity, revision) {
-  await bucket.put("current.json", JSON.stringify({ ...identity, revision, high_water: { commit: identity.commit, sequence: revision }, previous: null, operation: "promote", activated_at: "2026-09-17T00:00:00.000Z" }));
+  await bucket.put("current.json", JSON.stringify({ ...identity, revision, sequence: revision, high_water: { commit: identity.commit, sequence: revision }, previous: null, operation: "promote", activated_at: "2026-09-17T00:00:00.000Z" }));
 }
 
 test("direct Worker authenticates locally, initializes without origin, and exposes no raw R2 paths", async t => {
@@ -201,11 +201,12 @@ test("publication verifies the whole release before switching and rollback prese
   assert.equal(latest.current.commit, b.identity.commit);
   assert.equal(latest.current.high_water.sequence, 4);
   assert.equal((await rpc("skills/list")).body.result._meta.commit, b.identity.commit);
-  const rollback = await publish("/admin/rollback", { ...a.identity, expected_etag: latest.etag, sequence: 4 });
+  const rollback = await publish("/admin/rollback", { ...a.identity, expected_etag: latest.etag, sequence: 6 });
   assert.equal(rollback.status, 200, JSON.stringify(rollback));
   assert.equal(rollback.body.high_water.commit, b.identity.commit);
+  assert.equal(rollback.body.sequence, 6);
   const rolledBack = (await publish("/admin/current", undefined, "GET")).body;
-  const stale = await publish("/admin/promote", { ...b.identity, expected_etag: rolledBack.etag, sequence: 3 });
+  const stale = await publish("/admin/promote", { ...b.identity, expected_etag: rolledBack.etag, sequence: 5 });
   assert.equal(stale.status, 409, JSON.stringify(stale));
   assert.deepEqual((await publish("/admin/current", undefined, "GET")).body, rolledBack);
 });

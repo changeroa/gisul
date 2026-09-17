@@ -75,11 +75,16 @@ test("late old deployments cannot reverse a promotion or a deliberate rollback",
   const current = await readCurrent(bucket);
   await assert.rejects(switchCurrent(bucket, identity("a"), current.etag, 3), /older than/);
   assert.deepEqual(await readCurrent(bucket), current);
-  const rolledBack = await switchCurrent(bucket, identity("a"), current.etag, 4, "rollback");
+  const rolledBack = await switchCurrent(bucket, identity("a"), current.etag, 6, "rollback");
   assert.equal(rolledBack.commit, identity("a").commit);
   assert.equal(rolledBack.high_water.sequence, 4);
   assert.equal(rolledBack.high_water.commit, identity("b").commit);
-  await assert.rejects(switchCurrent(bucket, identity("c"), (await readCurrent(bucket)).etag, 3), /older than/);
+  assert.equal(rolledBack.sequence, 6);
+  await assert.rejects(switchCurrent(bucket, identity("c"), (await readCurrent(bucket)).etag, 5), /older than/);
+  const repeatedRollback = await switchCurrent(bucket, identity("a"), (await readCurrent(bucket)).etag, 8, "rollback");
+  assert.equal(repeatedRollback.sequence, 8, "same-release rollback still fences older operations");
+  assert.equal(repeatedRollback.high_water.sequence, 4);
+  await assert.rejects(switchCurrent(bucket, identity("c"), (await readCurrent(bucket)).etag, 7), /older than/);
   await assert.rejects(switchCurrent(bucket, identity("c"), current.etag, 5), /Current release changed/);
   assert.equal((await readCurrent(bucket)).value.commit, identity("a").commit);
 });

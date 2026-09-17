@@ -85,6 +85,7 @@ export async function verifyInventory(bucket: R2Bucket, commit: string, inventor
 export type ReleaseIdentity = { commit: string; release: string; inventory_digest: string };
 export type CurrentRelease = ReleaseIdentity & {
   revision: number;
+  sequence: number;
   high_water: { commit: string; sequence: number };
   previous: ReleaseIdentity | null;
   operation: "promote" | "rollback";
@@ -102,7 +103,7 @@ export async function readCurrent(bucket: R2Bucket): Promise<{ value: CurrentRel
   const value = await object.json<CurrentRelease>();
   assertIdentity(value);
   assertCommit(value.high_water?.commit);
-  if (!Number.isSafeInteger(value.revision) || value.revision < 1 || !Number.isSafeInteger(value.high_water.sequence) || value.high_water.sequence < 1) throw new ReleaseError("Invalid current release pointer");
+  if (!Number.isSafeInteger(value.revision) || value.revision < 1 || !Number.isSafeInteger(value.high_water.sequence) || value.high_water.sequence < 1 || !Number.isSafeInteger(value.sequence) || value.sequence < value.high_water.sequence) throw new ReleaseError("Invalid current release pointer");
   return { value, etag: object.etag };
 }
 
@@ -113,12 +114,14 @@ export async function switchCurrent(bucket: R2Bucket, candidate: ReleaseIdentity
   if (operation !== "promote" && operation !== "rollback") throw new ReleaseError("Unknown pointer operation", 400);
   if (!Number.isSafeInteger(sequence) || sequence < 1) throw new ReleaseError("A positive deployment sequence is required", 400);
   const current = await readCurrent(bucket);
+  if (current && current.value.sequence === sequence && current.value.operation === operation && current.value.commit === candidate.commit && current.value.release === candidate.release && current.value.inventory_digest === candidate.inventory_digest) return current.value;
   if ((current?.etag ?? null) !== expectedEtag) throw new ReleaseError("Current release changed; reload before publishing");
   if (operation === "rollback" && !current) throw new ReleaseError("There is no release to roll back");
-  if (operation === "promote" && current && sequence <= current.value.high_water.sequence) throw new ReleaseError("Deployment sequence is older than the last promotion");
+  if (current && sequence <= current.value.sequence) throw new ReleaseError("Deployment sequence is older than the last pointer operation");
   const value: CurrentRelease = {
     ...candidate,
     revision: (current?.value.revision ?? 0) + 1,
+    sequence,
     high_water: operation === "rollback" ? current!.value.high_water : { commit: candidate.commit, sequence },
     previous: current ? { commit: current.value.commit, release: current.value.release, inventory_digest: current.value.inventory_digest } : null,
     operation,

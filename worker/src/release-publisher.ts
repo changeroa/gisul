@@ -43,8 +43,6 @@ export async function publishRelease(bucket: R2Bucket, input: PublishRequest, op
   });
   if (operation !== "rollback") await putImmutableObject(bucket, identity.commit, "complete.json", new TextEncoder().encode(JSON.stringify(identity)).buffer);
   if (operation === "verify") return identity;
-  const current = await readCurrent(bucket);
-  if (current && current.value.commit === identity.commit && current.value.inventory_digest === identity.inventory_digest && current.value.release === identity.release) return current.value;
   return switchCurrent(bucket, identity, input.expected_etag, input.sequence, operation);
 }
 
