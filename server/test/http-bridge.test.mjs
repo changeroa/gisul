@@ -12,7 +12,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { parseUpstreamOptions } from '../dist/codex.js';
 import { pluginConnection } from '../../clients/codex/install-plugin.mjs';
-import worker from '../../worker/src/index.ts';
 
 test('HTTP configuration rejects insecure endpoints, embedded credentials and ambiguous modes', () => {
   const args = ['--origin', 'worker', '--http-url', 'https://skills.example/mcp', '--bearer-token-file', '/secrets/gisul'];
@@ -28,10 +27,7 @@ test('HTTP configuration rejects insecure endpoints, embedded credentials and am
   assert.throws(() => pluginConnection(['--http-url', 'https://skills.example/mcp', '--bearer-token-file', 'relative']));
 });
 
-test('bridge uses authenticated Worker HTTP, preserves release evidence, and recovers after an origin restart', { timeout: 30000 }, async t => {
-  // Node requires duplex for streamed bodies; Cloudflare's fetch accepts them directly.
-  const nativeFetch = globalThis.fetch;
-  t.mock.method(globalThis, 'fetch', (input, init) => nativeFetch(input, init?.body instanceof ReadableStream ? { ...init, duplex: 'half' } : init));
+test('bridge uses authenticated HTTP, preserves release evidence, and recovers after an upstream restart', { timeout: 30000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'gisul-http-bridge-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dir = join(root, 'skills/example'); await mkdir(dir, { recursive: true });
@@ -65,7 +61,7 @@ test('bridge uses authenticated Worker HTTP, preserves release evidence, and rec
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
       seenRequests++;
-      const result = await worker.fetch(new Request(`http://127.0.0.1:${proxy.address().port}${request.url}`, { method: request.method, headers: request.headers, ...(body.length ? { body } : {}) }), { ORIGIN_BASE_URL: `http://127.0.0.1:${port}` });
+      const result = await fetch(`http://127.0.0.1:${port}${request.url}`, { method: request.method, headers: request.headers, ...(body.length ? { body } : {}), redirect: 'manual' });
       response.writeHead(result.status, Object.fromEntries(result.headers)); response.end(Buffer.from(await result.arrayBuffer()));
     } catch { response.writeHead(502); response.end('Origin unavailable'); }
   });

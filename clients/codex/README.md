@@ -74,10 +74,9 @@ continues through the verified Git/release workflow. Credentials are not embedde
 in plugin files or URLs. Redirects are rejected. Plain HTTP is accepted only by
 the runtime on loopback for tests, not by the public endpoint installer.
 
-The existing Worker proxies to `ORIGIN_BASE_URL`: using its URL removes the
-client's SSH dependency but still requires the Mac mini origin and tunnel.
-Hosting the content directly on Cloudflare is a separate storage/deployment
-change. Do not claim the Mac mini is independent merely because the URL is a Worker.
+The R2 Worker serves immutable releases directly. Confirm the active Worker version,
+its private R2 binding, and a successful real release before updating the installed
+plugin. The [deployment guide](../../docs/deployment.md) describes those gates.
 
 This update path requires an existing local source in the default personal
 marketplace and the plugin-creator skill at
@@ -157,7 +156,11 @@ this does not modify Codex itself or guarantee automatic selection for every tas
   directories. `read_skill_file` on a returned directory expands its pinned
   children without reading their bodies. File reads still verify exact bytes.
 - Supporting files are read lazily against the manifest held for this connection.
-  Files outside it and changed bytes fail. Reload explicitly to inspect an update.
+  The bridge passes the loaded commit as `params._meta["io.gisul/commit"]` on file
+  and directory requests. The R2 Worker retains that version across publication
+  and rollback; a fresh load uses current. Files outside the manifest and changed
+  bytes fail. Upstreams without commit metadata retain digest checks but cannot
+  provide release pinning. Reload explicitly to inspect an update.
 - Each response names the configured upstream origin. The adapter has exactly one
   upstream and provides no cross-server reads, disk cache, or script execution.
 - Dynamic manifests and binary assets are unsupported in this instruction-only

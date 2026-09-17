@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker from "../src/index.ts";
+import { corsHeaders } from "../src/http.ts";
 
 const origin = "https://client.example";
-const env = { ORIGIN_BASE_URL: "https://upstream.example" };
 
 const cases = [
   { name: "adds Origin when Vary is absent", vary: null, expected: "Origin" },
@@ -20,32 +19,22 @@ const cases = [
 
 for (const { name, vary, expected } of cases) {
   for (const withOrigin of [true, false]) {
-    test(`${name} (${withOrigin ? "with" : "without"} request Origin)`, async (t) => {
+    test(`${name} (${withOrigin ? "with" : "without"} request Origin)`, () => {
       const upstreamHeaders = new Headers({ "x-upstream": "preserved" });
       if (vary !== null) upstreamHeaders.set("vary", vary);
-      const upstream = new Response("upstream body", {
-        status: 202,
-        statusText: "Accepted",
-        headers: upstreamHeaders,
-      });
-      const fetchMock = t.mock.method(globalThis, "fetch", async () => upstream);
       const requestHeaders = new Headers({ authorization: "Bearer test-token" });
       if (withOrigin) requestHeaders.set("origin", origin);
 
-      const response = await worker.fetch(new Request("https://proxy.example/mcp", {
+      const request = new Request("https://worker.example/mcp", {
         method: "POST",
         headers: requestHeaders,
-      }), env);
-
-      assert.equal(fetchMock.mock.callCount(), 1);
-      assert.equal(response.headers.get("vary"), withOrigin ? expected : vary);
-      assert.equal(response.headers.get("access-control-allow-origin"), withOrigin ? origin : null);
-      assert.equal(response.headers.get("x-upstream"), "preserved");
-      assert.equal(response.headers.get("cache-control"), "no-store");
-      assert.equal(response.status, 202);
-      assert.equal(response.statusText, "Accepted");
-      assert.equal(await response.text(), "upstream body");
-      assert.equal(upstream.headers.get("vary"), vary);
+      });
+      const result = new Headers(upstreamHeaders);
+      new Headers(corsHeaders(request, upstreamHeaders.get("vary"))).forEach((value, key) => result.set(key, value));
+      assert.equal(result.get("vary"), withOrigin ? expected : vary);
+      assert.equal(result.get("access-control-allow-origin"), withOrigin ? origin : null);
+      assert.equal(result.get("x-upstream"), "preserved");
+      assert.equal(upstreamHeaders.get("vary"), vary);
     });
   }
 }

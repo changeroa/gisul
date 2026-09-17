@@ -79,6 +79,11 @@ function visibleFiles(entry: Entry): string[] {
   return [...new Set(entry.resources.map(file => `${root}${file.uri.slice(root.length).split("/")[0]}`))].sort();
 }
 
+function pinnedParams(meta?: Metadata): { _meta?: Record<string, string> } {
+  // Keep the commit returned by skills/get even after the current release changes.
+  return meta?.commit ? { _meta: { "io.gisul/commit": meta.commit } } : {};
+}
+
 export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false): McpServer {
   const loaded = new Map<string, Entry>();
   const versions = new Map<string, Metadata>();
@@ -99,10 +104,10 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     } catch (error) { events?.emit({ event: "error", operation: event, code: eventErrorCode(error), ...params, elapsed_ms: Date.now() - started }); throw error; }
   }
 
-  async function read(entry: Entry, uri: string): Promise<string> {
+  async function read(entry: Entry, uri: string, meta?: Metadata): Promise<string> {
     const file = entry.resources.find(item => item.uri === uri);
     if (!file) throw new Error("File is outside the loaded manifest; load the relevant skill separately");
-    const result = await client.readResource({ uri });
+    const result = await client.readResource({ uri, ...pinnedParams(meta) });
     if (result.contents.length !== 1 || result.contents[0].uri !== uri) throw new Error("Unexpected resource response");
     const content = result.contents[0];
     const bytes = "text" in content ? Buffer.from(content.text, "utf8") : Buffer.from(content.blob, "base64");
@@ -125,8 +130,11 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     let cursor: string | undefined;
     const cursors = new Set<string>();
     let pages = 0;
+    let meta: Metadata | undefined;
     do {
-      const result = await client.request({ method: "skills/list", params: cursor ? { cursor } : {} }, z.object({ skills: z.array(entrySchema), nextCursor: z.string().optional() }));
+      const result = await client.request({ method: "skills/list", params: { ...(cursor ? { cursor } : {}), ...pinnedParams(meta) } }, z.object({ skills: z.array(entrySchema), nextCursor: z.string().optional(), _meta: metadataSchema.optional() }));
+      if (pages === 0) meta = result._meta;
+      else if (meta?.commit !== result._meta?.commit || meta?.release !== result._meta?.release) throw new Error("Catalog release changed during pagination; retry search_skills");
       for (const raw of result.skills) {
         const entry = validateEntry(raw);
         const keywords = Array.isArray(entry.frontmatter.keywords) ? entry.frontmatter.keywords.filter(word => typeof word === "string").join(" ") : "";
@@ -141,7 +149,7 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     matches.sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0);
     const skills = matches.slice(offset, offset + limit);
     const nextOffset = offset + skills.length < matches.length ? offset + skills.length : undefined;
-    return respond({ origin, skills, totalMatches: matches.length, offset, limit, nextOffset, note: "A partial or empty catalog does not exclude skills available by URI." });
+    return respond({ origin, release: meta?.release ?? null, commit: meta?.commit ?? null, skills, totalMatches: matches.length, offset, limit, nextOffset, note: "A partial or empty catalog does not exclude skills available by URI." });
   }));
 
   server.registerTool("load_skill", {
@@ -152,7 +160,7 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     const entry = validateEntry(result.skill);
     const meta = result._meta ?? {};
     if (entry.uri !== uri && (meta.movedFrom !== uri || new URL(entry.uri).host !== new URL(uri).host || new URL(uri).protocol !== "skill:")) throw new Error("Server returned a different skill without a matching same-server alias");
-    const markdown = await read(entry, entry.uri);
+    const markdown = await read(entry, entry.uri, meta);
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
     if (!match || !isDeepStrictEqual(parse(match[1]), entry.frontmatter)) throw new Error("Frontmatter differs from the manifest");
     const previous = loaded.get(entry.uri) ?? loaded.get(uri);
@@ -173,13 +181,13 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     const meta = versions.get(skill_uri);
     const version = { release: meta?.release ?? null, commit: meta?.commit ?? null, manifest_digest: manifestDigest(entry) };
     if (!entry.resources.some(file => file.uri === uri) && entry.resources.some(file => file.uri.startsWith(`${uri}/`))) {
-      const result = await client.request({ method: "resources/directory/read", params: { uri } }, z.object({ resources: z.array(z.object({ uri: z.string() })) }));
+      const result = await client.request({ method: "resources/directory/read", params: { uri, ...pinnedParams(meta) } }, z.object({ resources: z.array(z.object({ uri: z.string() })) }));
       const expected = new Set(entry.resources.filter(file => file.uri.startsWith(`${uri}/`)).map(file => `${uri}/${file.uri.slice(uri.length + 1).split("/")[0]}`));
       const files = result.resources.map(file => file.uri).filter(file => expected.has(file));
       if (files.length !== expected.size || new Set(files).size !== files.length) throw new Error("Directory differs from the pinned manifest; load_skill again");
       return respond({ origin, skill_uri: entry.uri, uri, ...version, kind: "directory", files: files.sort(), note: "Directory metadata only; read a listed file when needed." });
     }
-    return respond({ origin, skill_uri: entry.uri, uri, ...version, text: await read(entry, uri), note: "Supporting content only; nested SKILL.md frontmatter is not activated." });
+    return respond({ origin, skill_uri: entry.uri, uri, ...version, text: await read(entry, uri, meta), note: "Supporting content only; nested SKILL.md frontmatter is not activated." });
   }));
   if (readOnly) return server;
   const writeAnnotations = { readOnlyHint: false, idempotentHint: false, openWorldHint: true };

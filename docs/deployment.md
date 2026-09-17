@@ -1,4 +1,50 @@
-# Mac mini server deployment
+# Deployment
+
+## Worker and private R2
+
+The Worker in this checkout serves `/mcp` directly from `SKILLS_BUCKET`. It has no origin URL, tunnel, SSH connection, or filesystem dependency. `GISUL_BEARER_TOKEN` authenticates MCP readers; `GISUL_PUBLISH_TOKEN` authenticates publication. These secrets are separate from the Cloudflare account credentials used by Wrangler. Keep the bucket's public access disabled.
+
+The runtime and local integration tests are implemented here. Production activation still requires the skill repository's existing builder and behavioral evaluation gate to be connected, a real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Local fixture tests do not establish those production results.
+
+### Release contract
+
+An immutable prefix `releases/<full Git commit>/` contains the builder's `release.json`, skill files, `inventory.json`, and a Worker-generated `complete.json`. Inventory schema version 1 contains `commit`, `release`, verbatim skill entries (`uri`, `frontmatter`, `resources`), `aliases`, and `files`. Each file has a relative `path`, `digest` in `sha256:<hex>` form, byte `size`, and an optional canonical resource `uri`. Resource digests must agree with the skill manifests. `inventory.json` and `complete.json` are reserved and do not appear in `files`.
+
+Upload `inventory.json` first. It fixes the allowed paths and their bytes for that commit. Subsequent uploads must match it. Existing objects accept identical retries and reject replacement bytes. Supporting resources are served only through verified manifests.
+
+| Publication endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/admin/current` | GET | Read current identity and its ETag |
+| `/admin/releases/<commit>/<path>` | PUT | Upload an immutable object |
+| `/admin/promote` | POST | Verify and activate a release |
+| `/admin/rollback` | POST | Verify and reactivate a retained release |
+
+Promotion and rollback accept `commit`, `release`, `inventory_digest`, `expected_etag` (null only for the first publication), and a positive integer `sequence`. The inventory digest hashes its exact uploaded bytes. Verification checks the builder's per-skill manifest digests, SKILL.md frontmatter, every stored object's size and digest, and the complete object inventory before creating the completion marker. Rollback requires an existing completion marker from a previously verified promotion and rechecks the retained bytes. Only then does a conditional write replace `current.json`. R2's [conditional writes and consistency guarantees](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations) provide the storage primitive; tests exercise its concurrent behavior in the local Worker runtime.
+
+The pointer records a revision and the highest promotion sequence/commit. Rollback preserves that high-water mark. A delayed lower-sequence publication cannot undo a newer release or a rollback. Retrying a verified release that is already current returns its existing revision. After any uncertain write outcome, reread `/admin/current` before retrying.
+
+The GitHub Actions publisher must use one fixed production concurrency group with `cancel-in-progress: false`, retain the existing validation/evaluation gates, and check the current high-water commit is an ancestor of the candidate on main before promotion. Use a sequence from that fixed workflow and do not reset it. R2's ETag check is the final concurrency guard; the authenticated publisher is responsible for establishing Git ancestry and successful evaluation. No real-content publication is authorized by a local fixture pass alone.
+
+`skills/get` returns the selected release and commit. The bridge sends `params._meta["io.gisul/commit"]` on subsequent body and directory reads. Those requests use the completed immutable prefix; discovery and new loads read the latest pointer. Retain completed releases while existing connections may use them. Search evidence, load evidence, and file-read evidence carry release/commit for the trace exporter.
+
+### Initial activation
+
+Verify `wrangler whoami`, the configured account, the existing Worker deployment, and the private bucket. Build and test both packages from the repository root before compiling the Worker:
+
+```sh
+npm --prefix server ci
+npm --prefix server run build
+npm --prefix server test
+npm --prefix worker ci
+npm --prefix worker run typecheck
+npm --prefix worker test
+cd worker
+npx wrangler versions upload --dry-run
+```
+
+For migration, upload a candidate Worker version and use its preview URL to validate authentication and publish the first gated release. Keep production traffic on the existing version until the actual plugin can search, load, and read verified files from the candidate and release/commit is present in Langfuse. Then activate the tested version and record its source commit, Cloudflare version ID, content commit, inventory digest, and permanent checkout paths. [Worker versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/) separate uploading a candidate from activating it.
+
+## Mac mini server
 
 Run from a clean, committed checkout:
 

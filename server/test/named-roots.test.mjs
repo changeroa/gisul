@@ -21,7 +21,7 @@ test("named roots preserve gisul URIs across path and root-order changes", async
   await symlink(join(root, "release one"), join(root, "current"));
   const read = async config => {
     const client = new Client({ name: "named-roots-test", version: "1" });
-    const transport = new StdioClientTransport({ command: process.execPath, args: [server], env: { ...process.env, GISUL_SKILL_ROOTS: config, GISUL_SKILLS_DIRS: "/ignored-legacy-root" }, stderr: "pipe" });
+    const transport = new StdioClientTransport({ command: process.execPath, args: [server], env: { ...process.env, GISUL_ROOT: join(root, "runtime"), GISUL_SKILL_ROOTS: config, GISUL_SKILLS_DIRS: "/ignored-legacy-root" }, stderr: "pipe" });
     let stderr = ""; transport.stderr.on("data", bytes => { stderr += bytes; });
     try {
       await client.connect(transport);

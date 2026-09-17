@@ -144,7 +144,7 @@ test("Codex stdio adapter interoperates with the real gisul server", { timeout: 
     const adapter = fileURLToPath(new URL("../dist/codex.js", import.meta.url));
     const upstream = fileURLToPath(new URL("../dist/index.js", import.meta.url));
     const eventDir = join(root, "events");
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: [adapter, "--origin", "fixture-host", "--", "env", `GISUL_SKILLS_DIRS=${root}`, process.execPath, upstream], env: { ...process.env, GISUL_EVENT_LOG_DIR: eventDir } }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [adapter, "--origin", "fixture-host", "--", "env", `GISUL_ROOT=${root}`, `GISUL_STATE_DIR=${root}/state`, `GISUL_SKILLS_DIRS=${root}`, process.execPath, upstream], env: { ...process.env, GISUL_EVENT_LOG_DIR: eventDir } }));
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["create_skill", "load_skill", "read_skill_file", "search_skills", "update_skill"]);
     const result = await client.callTool({ name: "search_skills", arguments: { query: "workflow" } });
@@ -226,4 +226,93 @@ test("bridge reports release identity, follows explicit aliases, searches keywor
     meta = { ...meta, movedFrom: "skill://wrong/source/delivery/SKILL.md" };
     assert.equal((await call("load_skill", { uri: oldUri })).isError, true, "an undeclared redirect must fail");
   } finally { await client.close(); await server.close(); }
+});
+
+test("bridge pins each load across promotion, including the first body and directory reads", async t => {
+  const uri = "skill://gisul/gisul/versioned/SKILL.md";
+  const root = uri.slice(0, -8);
+  const releases = new Map(["a", "b"].map(letter => {
+    const commit = letter.repeat(40);
+    const markdown = `---\nname: versioned\ndescription: Versioned workflow\n---\nRelease ${letter}\n`;
+    const bodies = new Map([[uri, markdown], ...Array.from({ length: 21 }, (_, i) => [`${root}references/${letter}-${i}.md`, `Guide ${letter}-${i}`])]);
+    const skill = { uri, frontmatter: { name: "versioned", description: "Versioned workflow" }, resources: [...bodies].map(([uri, text]) => ({ uri, size: Buffer.byteLength(text), digest: `sha256:${createHash("sha256").update(text).digest("hex")}` })) };
+    return [commit, { skill, bodies, _meta: { release: `20260917.${letter === "a" ? 3 : 4}`, commit } }];
+  }));
+  const oldCommit = "a".repeat(40), newCommit = "b".repeat(40);
+  let current = oldCommit;
+  const reads = [];
+  const upstream = {
+    request: async ({ method, params }) => {
+      const release = releases.get(params._meta?.["io.gisul/commit"] ?? current);
+      if (method === "skills/list") return { skills: [release.skill], _meta: release._meta };
+      if (method === "skills/get") {
+        current = newCommit; // Promotion happens before the bridge reads even SKILL.md.
+        return { skill: release.skill, _meta: release._meta };
+      }
+      if (method === "resources/directory/read") {
+        assert.ok(params._meta?.["io.gisul/commit"], "directory requests must carry the loaded commit");
+        return { resources: [...release.bodies.keys()].filter(key => key.startsWith(`${params.uri}/`)).map(uri => ({ uri })) };
+      }
+      throw new Error(method);
+    },
+    readResource: async params => {
+      const commit = params._meta?.["io.gisul/commit"];
+      assert.ok(commit, "body requests must carry the loaded commit");
+      reads.push({ commit, uri: params.uri });
+      return { contents: [{ uri: params.uri, text: releases.get(commit).bodies.get(params.uri) }] };
+    },
+  };
+  const connect = async () => {
+    const server = createCodexBridge(upstream, "worker-fixture", undefined, true);
+    const client = new Client({ name: "pinned-test", version: "1" });
+    const [front, back] = InMemoryTransport.createLinkedPair();
+    await server.connect(back); await client.connect(front);
+    t.after(async () => { await client.close(); await server.close(); });
+    return async (name, args) => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.ok(!result.isError, JSON.stringify(result));
+      return JSON.parse(result.content[0].text);
+    };
+  };
+  const first = await connect();
+  assert.equal((await first("search_skills", {})).commit, oldCommit);
+  const loaded = await first("load_skill", { uri });
+  assert.equal(loaded.commit, oldCommit);
+  assert.match(loaded.markdown, /Release a/);
+  assert.deepEqual(reads, [{ commit: oldCommit, uri }], "loading reads only SKILL.md");
+  const second = await connect();
+  assert.equal((await second("search_skills", {})).commit, newCommit);
+  assert.equal((await second("load_skill", { uri })).commit, newCommit);
+  const oldDirectory = await first("read_skill_file", { skill_uri: uri, uri: `${root}references` });
+  assert.ok(oldDirectory.files.every(uri => uri.includes("/a-")));
+  const original = await first("read_skill_file", { skill_uri: uri, uri: oldDirectory.files[0] });
+  assert.equal(original.commit, oldCommit);
+  assert.match(original.text, /^Guide a-/);
+  const refreshed = await first("load_skill", { uri });
+  assert.equal(refreshed.commit, newCommit);
+  assert.equal(refreshed.changed, true);
+});
+
+test("search pins catalog pagination and rejects mixed release evidence", async t => {
+  const uri = "skill://gisul/gisul/flow/SKILL.md";
+  const entry = { uri, frontmatter: { name: "flow", description: "Flow" }, resources: [{ uri, size: 0, digest: `sha256:${createHash("sha256").update("").digest("hex")}` }] };
+  let drift = false;
+  const commit = "a".repeat(40);
+  const server = createCodexBridge({
+    request: async ({ params }) => {
+      if (params.cursor) assert.equal(params._meta["io.gisul/commit"], commit);
+      return { skills: params.cursor ? [] : [entry], ...(params.cursor ? {} : { nextCursor: "second" }), _meta: { commit: drift && params.cursor ? "b".repeat(40) : commit, release: "20260917.3" } };
+    },
+    readResource: async () => assert.fail("search reads metadata only"),
+  }, "worker-fixture");
+  const client = new Client({ name: "catalog-pin-test", version: "1" });
+  const [front, back] = InMemoryTransport.createLinkedPair();
+  await server.connect(back); await client.connect(front);
+  t.after(async () => { await client.close(); await server.close(); });
+  const call = () => client.callTool({ name: "search_skills", arguments: {} });
+  assert.equal(JSON.parse((await call()).content[0].text).commit, commit);
+  drift = true;
+  const result = await call();
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /release changed during pagination/);
 });

@@ -13,7 +13,7 @@ const markdown = (name, body = "Original") => `---\nname: ${name}\ndescription: 
 const data = result => { assert.ok(!result.isError, JSON.stringify(result)); return JSON.parse(result.content[0].text); };
 async function connect(root) {
   const client = new Client({ name: "write-test", version: "1" });
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: [server], env: { ...process.env, GISUL_SKILLS_DIRS: root } }));
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [server], env: { ...process.env, GISUL_ROOT: root, GISUL_SKILLS_DIRS: root } }));
   return client;
 }
 test("writes round-trip, preserve supporting files and reject duplicates, stale edits and unsafe paths", async () => {
@@ -60,7 +60,7 @@ test("independent server processes cannot both overwrite the same version", asyn
 });
 test("authenticated public HTTP remains read-only", { timeout: 15000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "gisul-http-write-"));
-  const child = spawn(process.execPath, [server, "--http"], { env: { ...process.env, PORT: "0", HOST: "127.0.0.1", GISUL_SKILLS_DIRS: root, GISUL_BEARER_TOKEN: "fixture-read-token", GISUL_ADMIN_TOKEN: "fixture-admin-token" }, stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn(process.execPath, [server, "--http"], { env: { ...process.env, PORT: "0", HOST: "127.0.0.1", GISUL_ROOT: root, GISUL_STATE_DIR: join(root, "state"), GISUL_SKILLS_DIRS: root, GISUL_BEARER_TOKEN: "fixture-read-token", GISUL_ADMIN_TOKEN: "fixture-admin-token" }, stdio: ["ignore", "ignore", "pipe"] });
   const client = new Client({ name: "http-test", version: "1" });
   try {
     const url = await new Promise((resolve, reject) => {
