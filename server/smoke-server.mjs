@@ -38,6 +38,7 @@ export async function smokeServer({ root, env = process.env, httpUrl }) {
       await http.connect(new StreamableHTTPClientTransport(new URL(httpUrl), { requestInit: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined }));
       const served = await http.request({ method: "skills/list", params: {} }, schema);
       assert.deepEqual(served.skills.map(skill => skill.uri).sort(), catalog.skills.map(skill => skill.uri).sort());
+      assert.equal(served._meta?.release, catalog._meta?.release, "HTTP and stdio must serve the same release");
     }
     return { serverVersion: upstream.getServerVersion(), release: catalog._meta?.release ?? null, skills: first.totalMatches, nextOffset: first.nextOffset, verifiedRead: true, http: !!httpUrl };
   } finally {

@@ -17,10 +17,18 @@ import { parse as parseYaml } from "yaml";
 
 const DEFAULT_ROOT = path.join(homedir(), "gisul");
 const ROOT_DIR = path.resolve(process.env.GISUL_ROOT ?? DEFAULT_ROOT);
+const CURRENT_DIR = path.join(ROOT_DIR, "current");
+const HAS_CURRENT = await lstat(CURRENT_DIR).then(() => true, error => {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+  throw error;
+});
+const CONTENT_DIR = HAS_CURRENT ? CURRENT_DIR : ROOT_DIR;
 const DEFAULT_SKILL_ROOTS = [
-  { id: "gisul", dir: path.join(ROOT_DIR, "skills") },
-  { id: "codex", dir: path.join(homedir(), ".codex", "skills") },
-  { id: "agents", dir: path.join(homedir(), ".agents", "skills") },
+  { id: "gisul", dir: path.join(CONTENT_DIR, "skills") },
+  ...(HAS_CURRENT ? [] : [
+    { id: "codex", dir: path.join(homedir(), ".codex", "skills") },
+    { id: "agents", dir: path.join(homedir(), ".agents", "skills") },
+  ]),
 ];
 const SKILL_ROOTS = configuredSkillRoots();
 const MAX_RESOURCE_BYTES = 16 * 1024 * 1024;
@@ -33,8 +41,8 @@ const STATE_DIR = path.resolve(process.env.GISUL_STATE_DIR ?? path.join(homedir(
 const TOKEN_REQUESTS_FILE = path.resolve(process.env.GISUL_TOKEN_REQUESTS_FILE ?? path.join(STATE_DIR, "token-requests.json"));
 const TOKENS_FILE = path.resolve(process.env.GISUL_TOKENS_FILE ?? path.join(STATE_DIR, "tokens.json"));
 const ADMIN_TOKEN_FILE = path.resolve(process.env.GISUL_ADMIN_TOKEN_FILE ?? path.join(STATE_DIR, "admin-token"));
-const RELEASE_FILE = path.resolve(process.env.GISUL_RELEASE_FILE ?? path.join(ROOT_DIR, "release.json"));
-const ALIASES_FILE = path.resolve(process.env.GISUL_ALIASES_FILE ?? path.join(ROOT_DIR, "aliases.json"));
+const RELEASE_FILE = path.resolve(process.env.GISUL_RELEASE_FILE ?? path.join(CONTENT_DIR, "release.json"));
+const ALIASES_FILE = path.resolve(process.env.GISUL_ALIASES_FILE ?? path.join(CONTENT_DIR, "aliases.json"));
 const SERVER_VERSION = "0.1.0";
 
 function configuredSkillRoots(): Array<{ id: string; dir: string }> {
@@ -104,7 +112,7 @@ function manifestDigest(entry: SkillEntry): string {
 async function readRelease(): Promise<ReleaseRecord | undefined> {
   let text: string;
   try { text = await readFile(RELEASE_FILE, "utf8"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT" && !HAS_CURRENT) return undefined; throw error; }
   const parsed = releaseSchema.safeParse(JSON.parse(text));
   if (!parsed.success) throw new McpError(ErrorCode.InternalError, "Invalid gisul release metadata");
   return { data: parsed.data, fingerprint: createHash("sha256").update(text).digest("hex") };
@@ -825,6 +833,9 @@ function validateSkillMarkdown(markdown: string, name: string): void {
 }
 
 async function withSkillWriteLock<T>(source: string, action: (root: string) => Promise<T>): Promise<T> {
+  if (HAS_CURRENT || await readRelease()) {
+    throw new Error("Published releases are immutable. Edit the gisul-skills Git checkout, validate and commit the draft, then promote a new release. Live create/update cannot modify a release.");
+  }
   const configured = SKILL_ROOTS.find(root => root.id === source);
   if (!configured) throw new Error(`Unknown skill source: ${source}`);
   await mkdir(configured.dir, { recursive: true });
