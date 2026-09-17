@@ -65,3 +65,19 @@ as of 10:46 KST, so it cannot establish sleep/resume behavior. A dedicated
 observer is available for the actual sleep. The original connection-loss cause
 remains unknown; neither successful listener restart nor synthetic child closure
 proves that cause. Evidence: `implementation/mvp-closure/isolated-sshd.jsonl`.
+
+At 11:15 KST, a separate diagnostic attempted to restart the default macOS
+`system/com.openssh.sshd` service. An independent launchd rescue job was armed
+before the attempt. Even under sudo, `launchctl bootout` returned exit 1,
+`Operation not permitted`. The service remained loaded; the rescue job found
+no restoration necessary. Existing and fresh bridge calls both succeeded, but
+this was **not an executed shared-service restart**. The task-owned restart and
+rescue jobs were removed after their journals were saved. No OS protection was
+changed. Evidence: `implementation/mvp-closure/default-sshd.jsonl` and
+`implementation/mvp-closure/default-sshd-journals.json`.
+
+The sleep observer was stopped before that SSH attempt to keep the scenarios
+separate, then armed again at 11:21 KST with a fresh connection and a new log,
+`implementation/mvp-closure/sleep-wake-20260917-rearmed.jsonl`. Initial search
+and load succeeded. Its deadline is September 18 at 11:21 KST; until a real
+system Sleep/full-Wake pair is recorded, sleep/resume remains untested.
