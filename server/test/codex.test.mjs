@@ -276,12 +276,14 @@ test("bridge pins each load across promotion, including the first body and direc
   };
   const first = await connect();
   assert.equal((await first("search_skills", {})).commit, oldCommit);
-  const loaded = await first("load_skill", { uri });
+  current = newCommit; // Also cover promotion between discovery and selection.
+  const loaded = await first("load_skill", { uri, commit: oldCommit });
   assert.equal(loaded.commit, oldCommit);
   assert.match(loaded.markdown, /Release a/);
   assert.deepEqual(reads, [{ commit: oldCommit, uri }], "loading reads only SKILL.md");
   const second = await connect();
   assert.equal((await second("search_skills", {})).commit, newCommit);
+  assert.equal((await second("search_skills", { commit: oldCommit })).commit, oldCommit, "a continuation can retain its original catalog");
   assert.equal((await second("load_skill", { uri })).commit, newCommit);
   const oldDirectory = await first("read_skill_file", { skill_uri: uri, uri: `${root}references` });
   assert.ok(oldDirectory.files.every(uri => uri.includes("/a-")));
@@ -291,6 +293,14 @@ test("bridge pins each load across promotion, including the first body and direc
   const refreshed = await first("load_skill", { uri });
   assert.equal(refreshed.commit, newCommit);
   assert.equal(refreshed.changed, true);
+  assert.notEqual(refreshed.load_id, loaded.load_id);
+  const pinnedDirectory = await first("read_skill_file", { skill_uri: uri, uri: `${root}references`, load_id: loaded.load_id });
+  const pinnedFile = await first("read_skill_file", { skill_uri: uri, uri: pinnedDirectory.files[0], load_id: loaded.load_id });
+  assert.equal(pinnedFile.commit, oldCommit, "reloading the same URI cannot replace an earlier explicit load");
+  assert.match(pinnedFile.text, /^Guide a-/);
+  current = oldCommit;
+  const afterRollback = await first("read_skill_file", { skill_uri: uri, uri: `${root}references/b-0.md`, load_id: refreshed.load_id });
+  assert.equal(afterRollback.commit, newCommit, "rollback does not rewrite an already loaded version");
 });
 
 test("search pins catalog pagination and rejects mixed release evidence", async t => {
