@@ -202,3 +202,30 @@ node server/dist/codex.js --origin my-server -- /absolute/path/to/server arg1
 To remove the plugin: `codex plugin remove gisul@personal`.
 For the standalone setup, remove the MCP registration with `codex mcp remove gisul`. Remove the installed
 `skills/gisul/SKILL.md` separately if you no longer want the loader.
+
+## Opt-in discovery modes and version selection
+
+`search_skills` keeps its original substring matching and URI order when `mode`
+is omitted or `legacy`. New clients can opt into `automatic` or `explicit`.
+Both normalize case, Unicode width/composition and whitespace, require every
+query term to match, and rank exact names before exact keywords, then other
+name/keyword/description matches. URI order breaks ties; same-named skills from
+different sources remain distinct. Keywords come from the skill's versioned
+frontmatter, so adding bilingual discovery terms is a content change.
+
+`automatic` excludes entries with `disable-model-invocation: true` and requires
+a nonempty subject. `explicit` includes them for a user-requested workflow.
+These modes return `invocation` and the SKILL.md `digest` with each match. This
+is a discovery policy, not an authorization boundary. The tool does not schedule
+automatic searches or change global Codex instructions.
+
+Continue a result page with the same query, mode, limit and returned `commit`.
+Omit commit on a new task to discover the current release. Passing that commit
+to `load_skill` selects the same immutable release; an upstream that cannot
+honor it fails instead of silently supplying current content.
+
+Each load returns `load_id`. Pass it with `skill_uri` and a listed file or
+directory URI to `read_skill_file` to retain that manifest even after reloading
+the same skill at a newer commit. Without `load_id`, existing clients continue
+using the latest load for that URI in their connection. A load ID belongs to its
+connection and the exact skill/declared alias; it cannot read another skill.
