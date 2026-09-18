@@ -44,6 +44,8 @@ test("ranked discovery preserves exact identities, uses bilingual keywords and r
   assert.equal(next.skills[0].uri, entries[1].uri);
   assert.equal(next.nextOffset, undefined);
   assert.equal((await search({ query: "unknown subject", mode: "automatic" })).totalMatches, 0);
+  assert.equal((await search({ query: "spec", mode: "automatic" })).totalMatches, 0, "short Latin terms cannot match inside another word such as inspector");
+  assert.equal((await search({ query: "spec" })).totalMatches, 4, "legacy clients retain substring behavior");
   const before = requests;
   for (const args of [{ mode: "automatic" }, { mode: "automatic", query: "  " }, { mode: "typo" }]) {
     assert.equal((await client.callTool({ name: "search_skills", arguments: args })).isError, true);

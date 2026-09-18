@@ -212,6 +212,9 @@ query term to match, and rank exact names before exact keywords, then other
 name/keyword/description matches. URI order breaks ties; same-named skills from
 different sources remain distinct. Keywords come from the skill's versioned
 frontmatter, so adding bilingual discovery terms is a content change.
+Latin alphanumeric terms match whole words in these modes: `UI` does not match
+inside `build`, and `hate` does not match inside `whatever`. Non-Latin terms and
+compound names retain substring matching after Unicode normalization.
 
 `automatic` excludes entries with `disable-model-invocation: true` and requires
 a nonempty subject. `explicit` includes them for a user-requested workflow.

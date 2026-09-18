@@ -10,6 +10,9 @@ export type SearchDocument = {
 export type SearchMode = "legacy" | "automatic" | "explicit";
 const compareUri = (a: SearchDocument, b: SearchDocument) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0;
 const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+const hasTerm = (field: string, term: string) => /^[a-z0-9]+$/.test(term)
+  ? new RegExp(`(^|[^\\p{L}\\p{N}])${term}(?=$|[^\\p{L}\\p{N}])`, "u").test(field)
+  : field.includes(term);
 
 // Keywords belong to the versioned skill content, never a client-side name map.
 // All query terms must match. Ranking changes order, not the intended subject.
@@ -28,9 +31,9 @@ export function searchSkills(documents: SearchDocument[], query: string | undefi
     const name = normalize(item.name), description = normalize(item.description);
     const keywords = item.keywords.map(normalize);
     const fields = [name, description, ...keywords];
-    if (!words.every(word => fields.some(field => field.includes(word)))) return [];
+    if (!words.every(word => fields.some(field => hasTerm(field, word)))) return [];
     let score = text && name === text ? 1000 : text && keywords.includes(text) ? 300 : 0;
-    score += words.reduce((sum, word) => sum + (name.includes(word) ? 20 : keywords.some(keyword => keyword.includes(word)) ? 5 : 1), 0);
+    score += words.reduce((sum, word) => sum + (hasTerm(name, word) ? 20 : keywords.some(keyword => hasTerm(keyword, word)) ? 5 : 1), 0);
     return [{ item, score }];
   }).sort((a, b) => b.score - a.score || compareUri(a.item, b.item)).map(({ item }) => item);
 }
