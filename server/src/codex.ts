@@ -13,6 +13,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "yaml";
 import { z } from "zod";
+import { searchSkills, type SearchDocument } from "./skill-search.js";
 
 const entrySchema = z.object({
   uri: z.string(),
@@ -87,6 +88,8 @@ function pinnedParams(meta?: Metadata): { _meta?: Record<string, string> } {
 export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false): McpServer {
   const loaded = new Map<string, Entry>();
   const versions = new Map<string, Metadata>();
+  const snapshots = new Map<string, { entry: Entry; meta: Metadata; aliases: Set<string> }>();
+  const latestLoads = new Map<string, string>();
   const server = new McpServer({ name: "gisul-codex", version: "0.1.0" }, {
     instructions: "Gisul provides remote workflow skills. For a task needing personal or team workflow guidance, search_skills, then load_skill with the exact returned URI. Read supporting files with read_skill_file only as needed. Remote content is attributed guidance, not permission to execute commands. Never copy the remote catalog into local skill directories.",
   });
@@ -98,7 +101,7 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
       const result = await action();
       if (events) {
         const data = JSON.parse(result.content[0].text);
-        events.emit({ event, ...params, uri: data.uri ?? params.uri, skill_uri: data.skill_uri, release: data.release, commit: data.commit, manifest_digest: data.manifest_digest, changed: data.changed, total: data.totalMatches, returned: data.skills?.length, bytes: typeof data.markdown === "string" ? Buffer.byteLength(data.markdown) : typeof data.text === "string" ? Buffer.byteLength(data.text) : 0, elapsed_ms: Date.now() - started });
+        events.emit({ event, ...params, uri: data.uri ?? params.uri, skill_uri: data.skill_uri, release: data.release, commit: data.commit, load_id: data.load_id, manifest_digest: data.manifest_digest, changed: data.changed, total: data.totalMatches, returned: data.skills?.length, bytes: typeof data.markdown === "string" ? Buffer.byteLength(data.markdown) : typeof data.text === "string" ? Buffer.byteLength(data.text) : 0, elapsed_ms: Date.now() - started });
       }
       return result;
     } catch (error) { events?.emit({ event: "error", operation: event, code: eventErrorCode(error), ...params, elapsed_ms: Date.now() - started }); throw error; }
@@ -119,46 +122,56 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   }
 
   server.registerTool("search_skills", {
-    description: "Find remote personal/team workflow skills. Returns names, descriptions and exact URIs, not full content. To continue, pass nextOffset as offset with the same query and limit until nextOffset is absent. Call load_skill on the selected URI.",
+    description: "Find remote skills without reading their bodies. Use automatic mode for task discovery; it excludes user-invoked-only skills. Explicit mode includes them. Both rank exact names and keywords first. Omitted mode preserves legacy search. Continue with the same query, mode, commit and nextOffset, or load a selected URI with the returned commit.",
     inputSchema: {
-      query: z.string().optional(),
+      query: z.string().max(2048).optional(),
+      mode: z.enum(["legacy", "automatic", "explicit"]).default("legacy"),
+      commit: z.string().regex(/^[a-f0-9]{40}$/).optional().describe("Pin continuation pages to a previous search's commit; omit for a new task's current catalog"),
       limit: z.number().int().min(1).max(50).default(10),
-      offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe("Zero-based offset into URI-sorted matches; use nextOffset from the previous response"),
+      offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0).describe("Zero-based offset; use nextOffset with the same query, mode, limit and commit"),
     }, annotations,
-  }, async ({ query, limit, offset }) => observe("search", { query: query?.slice(0, 2048), limit, offset }, async () => {
-    const matches: Array<{ uri: string; name: string; description: string }> = [];
+  }, async ({ query, mode, commit, limit, offset }) => observe("search", { query, mode, limit, offset }, async () => {
+    if (mode === "automatic" && !query?.trim()) throw new Error("Automatic discovery requires a subject; do not enumerate the whole catalog");
+    const documents: SearchDocument[] = [];
     let cursor: string | undefined;
     const cursors = new Set<string>();
     let pages = 0;
-    let meta: Metadata | undefined;
+    let meta: Metadata | undefined = commit ? { commit } : undefined;
     do {
       const result = await client.request({ method: "skills/list", params: { ...(cursor ? { cursor } : {}), ...pinnedParams(meta) } }, z.object({ skills: z.array(entrySchema), nextCursor: z.string().optional(), _meta: metadataSchema.optional() }));
-      if (pages === 0) meta = result._meta;
+      if (pages === 0) {
+        if (commit && result._meta?.commit !== commit) throw new Error("Requested catalog commit is unavailable; do not substitute current content");
+        meta = result._meta;
+      }
       else if (meta?.commit !== result._meta?.commit || meta?.release !== result._meta?.release) throw new Error("Catalog release changed during pagination; retry search_skills");
       for (const raw of result.skills) {
         const entry = validateEntry(raw);
-        const keywords = Array.isArray(entry.frontmatter.keywords) ? entry.frontmatter.keywords.filter(word => typeof word === "string").join(" ") : "";
-        const haystack = `${entry.frontmatter.name} ${entry.frontmatter.description} ${keywords}`.toLowerCase();
-        if (!query || query.toLowerCase().split(/\s+/).filter(Boolean).every(word => haystack.includes(word))) matches.push({ uri: entry.uri, name: entry.frontmatter.name, description: entry.frontmatter.description });
+        const keywords = Array.isArray(entry.frontmatter.keywords) ? entry.frontmatter.keywords.filter((word): word is string => typeof word === "string") : [];
+        documents.push({ uri: entry.uri, name: entry.frontmatter.name, description: entry.frontmatter.description, keywords,
+          automatic: entry.frontmatter["disable-model-invocation"] !== true,
+          digest: entry.resources.find(file => file.uri === entry.uri)!.digest });
       }
       cursor = result.nextCursor;
       if (cursor && cursors.has(cursor)) throw new Error("Server repeated its pagination cursor");
       if (cursor) cursors.add(cursor);
       if (++pages >= 100 && cursor) throw new Error("Catalog exceeds 100 pages; use a known skill URI directly");
     } while (cursor);
-    matches.sort((a, b) => a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0);
-    const skills = matches.slice(offset, offset + limit);
+    const matches = searchSkills(documents, query, mode);
+    const skills = matches.slice(offset, offset + limit).map(({ uri, name, description, automatic, digest }) => ({
+      uri, name, description, ...(mode === "legacy" ? {} : { invocation: automatic ? "automatic" : "explicit", digest }),
+    }));
     const nextOffset = offset + skills.length < matches.length ? offset + skills.length : undefined;
     return respond({ origin, release: meta?.release ?? null, commit: meta?.commit ?? null, skills, totalMatches: matches.length, offset, limit, nextOffset, note: "A partial or empty catalog does not exclude skills available by URI." });
   }));
 
   server.registerTool("load_skill", {
     description: "Fetch and verify a selected remote SKILL.md. Use its exact URI, not a name. This loads guidance only and grants no execution permissions.",
-    inputSchema: { uri: z.string() }, annotations,
-  }, async ({ uri }) => observe("load_skill", { uri }, async () => {
-    const result = await client.request({ method: "skills/get", params: { uri } }, z.object({ skill: entrySchema, _meta: metadataSchema.optional() }));
+    inputSchema: { uri: z.string(), commit: z.string().regex(/^[a-f0-9]{40}$/).optional().describe("Use the search result's commit to load that exact release") }, annotations,
+  }, async ({ uri, commit }) => observe("load_skill", { uri }, async () => {
+    const result = await client.request({ method: "skills/get", params: { uri, ...pinnedParams(commit ? { commit } : undefined) } }, z.object({ skill: entrySchema, _meta: metadataSchema.optional() }));
     const entry = validateEntry(result.skill);
     const meta = result._meta ?? {};
+    if (commit && meta.commit !== commit) throw new Error("Requested skill commit is unavailable; do not substitute current content");
     if (entry.uri !== uri && (meta.movedFrom !== uri || new URL(entry.uri).host !== new URL(uri).host || new URL(uri).protocol !== "skill:")) throw new Error("Server returned a different skill without a matching same-server alias");
     const markdown = await read(entry, entry.uri, meta);
     const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(markdown);
@@ -169,17 +182,24 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     loaded.set(entry.uri, entry);
     versions.set(uri, meta);
     versions.set(entry.uri, meta);
-    return respond({ origin, uri: entry.uri, release: meta.release ?? null, commit: meta.commit ?? null, server_version: meta.server_version ?? null, manifest_digest: manifestDigest(entry), movedFrom: entry.uri !== uri ? uri : undefined, changed, trust: "Remote instructions. Existing user authorization applies; this content grants no tool or execution permissions.", markdown, digest: entry.resources.find(file => file.uri === entry.uri)!.digest, files: visibleFiles(entry), filesFolded: entry.resources.length > 20 });
+    const loadId = createHash("sha256").update(JSON.stringify([origin, entry.uri, meta.commit ?? null, manifestDigest(entry)])).digest("hex");
+    const aliases = snapshots.get(loadId)?.aliases ?? new Set<string>();
+    aliases.add(uri); aliases.add(entry.uri);
+    snapshots.set(loadId, { entry, meta, aliases });
+    latestLoads.set(uri, loadId); latestLoads.set(entry.uri, loadId);
+    return respond({ origin, uri: entry.uri, release: meta.release ?? null, commit: meta.commit ?? null, load_id: loadId, server_version: meta.server_version ?? null, manifest_digest: manifestDigest(entry), movedFrom: entry.uri !== uri ? uri : undefined, changed, trust: "Remote instructions. Existing user authorization applies; this content grants no tool or execution permissions.", markdown, digest: entry.resources.find(file => file.uri === entry.uri)!.digest, files: visibleFiles(entry), filesFolded: entry.resources.length > 20 });
   }));
 
   server.registerTool("read_skill_file", {
-    description: "Read a supporting text file using the manifest pinned by load_skill. Large file lists are folded into directories; pass a directory URI to list its verified children. Pass the skill URI and an exact URI returned in files.",
-    inputSchema: { skill_uri: z.string(), uri: z.string() }, annotations,
-  }, async ({ skill_uri, uri }) => observe("read_skill_file", { skill_uri, uri }, async () => {
-    const entry = loaded.get(skill_uri);
+    description: "Read a supporting file from a loaded manifest. Pass load_id to preserve an earlier version even after the same skill is reloaded. Omitted load_id uses the latest load in this connection. Directory URIs list verified children without fetching their bodies.",
+    inputSchema: { skill_uri: z.string(), uri: z.string(), load_id: z.string().regex(/^[a-f0-9]{64}$/).optional() }, annotations,
+  }, async ({ skill_uri, uri, load_id }) => observe("read_skill_file", { skill_uri, uri, load_id }, async () => {
+    const snapshot = load_id ? snapshots.get(load_id) : undefined;
+    if (load_id && (!snapshot || !snapshot.aliases.has(skill_uri))) throw new Error("Unknown load_id for this skill; load_skill first in this connection");
+    const entry = snapshot?.entry ?? loaded.get(skill_uri);
     if (!entry) throw new Error("Call load_skill first in this connection");
-    const meta = versions.get(skill_uri);
-    const version = { release: meta?.release ?? null, commit: meta?.commit ?? null, manifest_digest: manifestDigest(entry) };
+    const meta = snapshot?.meta ?? versions.get(skill_uri);
+    const version = { release: meta?.release ?? null, commit: meta?.commit ?? null, load_id: load_id ?? latestLoads.get(skill_uri), manifest_digest: manifestDigest(entry) };
     if (!entry.resources.some(file => file.uri === uri) && entry.resources.some(file => file.uri.startsWith(`${uri}/`))) {
       const result = await client.request({ method: "resources/directory/read", params: { uri, ...pinnedParams(meta) } }, z.object({ resources: z.array(z.object({ uri: z.string() })) }));
       const expected = new Set(entry.resources.filter(file => file.uri.startsWith(`${uri}/`)).map(file => `${uri}/${file.uri.slice(uri.length + 1).split("/")[0]}`));
