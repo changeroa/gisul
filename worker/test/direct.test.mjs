@@ -7,6 +7,7 @@ import { Miniflare } from "miniflare";
 import { Client } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js";
 import { StreamableHTTPClientTransport } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js";
 import { InMemoryTransport } from "../../server/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js";
+import { NegotiatingTransport, protocolFetch, modernParams } from "../../server/dist/protocol.js";
 import { createCodexBridge } from "../../server/dist/codex.js";
 
 const hash = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -21,7 +22,7 @@ async function fixture(t, bearer = token) {
   const runtime = new Miniflare({ telemetry: { enabled: false }, logRequests: false, workers: [{ config: {
     type: "worker", name: "direct-test", compatibilityDate: "2026-09-03",
     manifest: { mainModule: "index.js", modules },
-    env: { SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
+    env: { SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_ALLOWED_ORIGINS: { type: "text", value: "https://client.example" }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
   } }] });
   t.after(() => runtime.dispose());
   const bucket = await runtime.getR2Bucket("SKILLS_BUCKET");
@@ -91,11 +92,11 @@ test("real HTTP bridge keeps old bodies and directories pinned while a new conne
     const transport = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { authorization: `Bearer ${token}` } }, fetch: async (input, init) => {
       const message = typeof init?.body === "string" ? JSON.parse(init.body) : null;
       if (message?.method === "resources/read" || message?.method === "resources/directory/read") wireReads.push(message);
-      const response = await fetch(input, init);
+      const response = await protocolFetch(input, init);
       if (message?.method === "skills/get" && promoteDuringLoad) { promoteDuringLoad = false; await activate(bucket, b.identity, 2); }
       return response;
     } });
-    await upstream.connect(transport);
+    await upstream.connect(new NegotiatingTransport(transport));
     const bridge = createCodexBridge(upstream, "r2-worker-fixture", { connectionId: `connection-${evidence.length}`, emit: event => evidence.push(event), flush: async () => {} }, true);
     const client = new Client({ name: "plugin-fixture", version: "1" });
     const [front, back] = InMemoryTransport.createLinkedPair();
@@ -259,4 +260,38 @@ test("oversized publication and upload requests return 413 before mutation", asy
   const path = `/admin/releases/${"a".repeat(40)}/inventory.json`;
   assert.equal((await publish(path, " ".repeat(16 * 1024 * 1024 + 1), "PUT")).status, 413);
   assert.deepEqual((await bucket.list()).objects, []);
+});
+
+
+test("modern Worker validates metadata, emits private cache hints, and preserves immutable pins", async t => {
+  const { rpc, bucket } = await fixture(t);
+  const a = await release(bucket, "a"), b = await release(bucket, "b");
+  await activate(bucket, a.identity, 1);
+  const modern = (method, params = {}, headers = {}) => rpc(method, modernParams(params), {
+    accept: "application/json, text/event-stream", "mcp-protocol-version": "2026-07-28", "mcp-method": method,
+    ...(method === "resources/read" ? { "mcp-name": params.uri } : {}), ...headers,
+  });
+  const discovery = await modern("server/discover");
+  assert.equal(discovery.status, 200);
+  assert.deepEqual(discovery.body.result.supportedVersions, ["2026-07-28"]);
+  assert.equal(discovery.body.result.cacheScope, "private");
+  assert.equal(discovery.body.result.ttlMs, 30000);
+  assert.equal(discovery.headers.get("cache-control"), "no-store");
+  const listing = await modern("skills/list");
+  assert.equal(listing.body.result._meta.commit, a.identity.commit);
+  await activate(bucket, b.identity, 2);
+  const pinned = await modern("resources/read", { uri, _meta: { "io.gisul/commit": a.identity.commit } });
+  assert.equal(pinned.body.result.contents[0].text, a.markdown);
+  assert.equal(pinned.body.result.resultType, "complete");
+  assert.equal((await modern("skills/list")).body.result._meta.commit, b.identity.commit);
+  assert.equal((await modern("skills/list", {}, { "mcp-method": "wrong" })).body.error.code, -32020);
+  assert.equal((await modern("resources/read", { uri }, { "mcp-name": "wrong" })).status, 400);
+  assert.equal((await modern("resources/read", { uri }, { "mcp-name": `=?base64?${Buffer.from(uri).toString("base64")}?=` })).status, 200);
+  assert.equal((await modern("server/discover", {}, { origin: "https://evil.example" })).status, 403);
+  assert.equal((await modern("server/discover", {}, { accept: "application/json" })).status, 406);
+  assert.equal((await modern("unknown")).status, 404);
+  const future = modernParams(); future._meta["io.modelcontextprotocol/protocolVersion"] = "2099-01-01";
+  const unsupported = await rpc("server/discover", future, { accept: "application/json, text/event-stream", "mcp-protocol-version": "2099-01-01", "mcp-method": "server/discover" });
+  assert.equal(unsupported.body.error.code, -32022);
+  assert.deepEqual(unsupported.body.error.data.supported, ["2026-07-28"]);
 });

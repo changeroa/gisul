@@ -7,7 +7,7 @@ export function corsHeaders(request: Request, existingVary: string | null = null
   return {
     "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
+    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
     "access-control-max-age": "86400",
     vary,
   };

@@ -8,6 +8,18 @@ The production machine endpoint is `https://gisul-mcp.changeroa.workers.dev/mcp`
 
 Production activation requires a gated real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Structural migration of unchanged content uses Git-byte and manifest parity; behavioral changes retain the skill repository's separate model evaluation requirements. Local fixture tests do not establish those production results.
 
+### Current protocol and client
+
+The direct Worker supports MCP `2026-07-28` with `server/discover`, per-request protocol/capability metadata, matching HTTP headers, and private 30-second cache hints. HTTP responses remain `no-store`; the bridge owns its credential-isolated memory cache and verifies resource digests even on cache hits. Legacy initialization remains available for existing publishers and clients. Browser origins must match the endpoint origin or an explicit comma-separated `GISUL_ALLOWED_ORIGINS` value.
+
+Install the production client over HTTPS:
+
+```sh
+node clients/codex/install.mjs --plugin --http-url https://gisul-mcp.changeroa.workers.dev/mcp --bearer-token-file "$HOME/.config/gisul-worker-dev-tools/mcp-bearer"
+```
+
+This reader exposes search, load and verified file reads. Content changes go through `changeroa/gisul-skills` main and its gated `publish-r2.yml` GitHub Actions workflow on Ubuntu. Neither serving nor publishing requires the Mac mini. The Mac mini is only used as an authenticated Wrangler deployment workstation. Its old Node service is retained separately for rollback and is not in the production request path.
+
 ### Release contract
 
 An immutable prefix `releases/<full Git commit>/` contains the builder's `release.json`, skill files, `inventory.json`, and a Worker-generated `complete.json`. Inventory schema version 1 contains `commit`, `release`, verbatim skill entries (`uri`, `frontmatter`, `resources`), `aliases`, and `files`. Each file has a relative `path`, `digest` in `sha256:<hex>` form, byte `size`, and an optional canonical resource `uri`. Resource digests must agree with the skill manifests. `inventory.json` and `complete.json` are reserved and do not appear in `files`.
@@ -46,7 +58,7 @@ cd worker
 npx wrangler versions upload --dry-run
 ```
 
-For migration, upload a candidate Worker version with `--var GISUL_SERVER_VERSION:<full source commit>` and use its preview URL to validate authentication and publish the first gated release. Keep production traffic on the existing version until the actual plugin can search, load, and read verified files from the candidate and release/commit is present in Langfuse. The initial old production version reads the Mac origin and has no R2 binding. Candidate and future production versions share the R2 bucket and pointer; preview promotion is not an isolated test environment after cutover. Then activate the tested version and record its source commit, Cloudflare version ID, content commit, inventory digest, and permanent checkout paths. [Worker versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/) separate uploading a candidate from activating it.
+For migration, upload a candidate Worker version with `--var GISUL_SERVER_VERSION:<full source commit>` and use its preview URL to validate authentication and publish the first gated release. Keep production traffic on the existing version until the actual plugin can search, load, and read verified files from the candidate and release/commit is present in Langfuse. The pre-migration version read the Mac origin; the current production version reads R2 directly. Candidate and future production versions share the R2 bucket and pointer; preview promotion is not an isolated test environment after cutover. Then activate the tested version and record its source commit, Cloudflare version ID, content commit, inventory digest, and permanent checkout paths. [Worker versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/) separate uploading a candidate from activating it.
 
 ## Mac mini server
 
