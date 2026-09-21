@@ -27,7 +27,10 @@ function gitClient(env: WriteEnv): GitCall {
     let response: Response;
     try {
       response = await fetch(`${apiRoot}${path}`, { method, headers: { authorization: `Bearer ${env.GISUL_GITHUB_TOKEN}`, accept: "application/vnd.github+json", "content-type": "application/json", "user-agent": "gisul-worker", "x-github-api-version": "2022-11-28" }, redirect: "error", signal: AbortSignal.timeout(15_000), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    } catch { throw new ReleaseError("GitHub request outcome is unknown; inspect main before retrying a write", 502); }
+    } catch (error) {
+      console.error("GitHub transport failed", { method, path, reason: error instanceof Error ? error.message : "unknown" });
+      throw new ReleaseError(`GitHub request outcome is unknown (${method} ${path}); inspect main before retrying a write`, 502);
+    }
     if (!response.ok) throw new ReleaseError([409, 422].includes(response.status) ? "Git changed concurrently or rejected the write; reload and reconcile before retrying" : `GitHub request failed (${response.status})`, [409, 422].includes(response.status) ? 409 : 502);
     return response.json();
   };
