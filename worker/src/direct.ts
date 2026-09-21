@@ -1,12 +1,15 @@
 import { corsHeaders, jsonResponse, readBody, validBearer } from "./http.ts";
 import { ReleaseError } from "./r2-objects.ts";
 import { canonicalUri, mimeType, readDirectory, readResource, readSnapshot, resolveAlias } from "./release-reader.ts";
+import { skillWrite, writeTools } from "./skill-writer.ts";
 import { publisherFetch } from "./release-publisher.ts";
 
 export interface DirectEnv {
   SKILLS_BUCKET: R2Bucket;
   GISUL_BEARER_TOKEN: string;
   GISUL_PUBLISH_TOKEN?: string;
+  GISUL_WRITE_TOKEN?: string;
+  GISUL_GITHUB_TOKEN?: string;
   GISUL_SERVER_VERSION?: string;
   GISUL_ALLOWED_ORIGINS?: string;
 }
@@ -42,12 +45,13 @@ export default {
     if (origin && !allowedOrigins.includes(origin)) return jsonResponse(request, { error: "Invalid origin" }, 403);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
     if (!env.GISUL_BEARER_TOKEN) return jsonResponse(request, { error: "MCP authentication is not configured" }, 503);
-    if (!await validBearer(request, env.GISUL_BEARER_TOKEN)) return jsonResponse(request, { error: "Unauthorized" }, 401, { "www-authenticate": "Bearer" });
+    const canWrite = !!env.GISUL_GITHUB_TOKEN && await validBearer(request, env.GISUL_WRITE_TOKEN ?? "");
+    if (!canWrite && !await validBearer(request, env.GISUL_BEARER_TOKEN)) return jsonResponse(request, { error: "Unauthorized" }, 401, { "www-authenticate": "Bearer" });
     if (request.method !== "POST") return jsonResponse(request, { error: "Method Not Allowed" }, 405, { allow: "POST" });
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) return jsonResponse(request, { error: "Expected application/json" }, 415);
     const protocol = request.headers.get("mcp-protocol-version");
     let bytes: ArrayBuffer;
-    try { bytes = await readBody(request, 64 * 1024); } catch { return jsonResponse(request, { error: "Request body is too large" }, 413); }
+    try { bytes = await readBody(request, canWrite ? 1024 * 1024 : 64 * 1024); } catch { return jsonResponse(request, { error: "Request body is too large" }, 413); }
     let rpc: Rpc;
     try { rpc = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
     catch { return rpcError(request, null, -32700, "Parse error", 400); }
@@ -65,7 +69,7 @@ export default {
     } else if (protocol && !versions.includes(protocol)) return rpcError(request, rpc.id, -32600, "Unsupported MCP protocol version", 400);
     if (rpc.id === undefined) return jsonResponse(request, undefined, 202);
     const serverInfo = { name: "gisul", version: env.GISUL_SERVER_VERSION ?? "0.2.0" };
-    const capabilities = { resources: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } } };
+    const capabilities = { ...(canWrite ? { tools: { listChanged: false } } : {}), resources: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } } };
     const respond = (result: Record<string, unknown>) => jsonResponse(request, { jsonrpc: "2.0", id: rpc.id, result: modern ? {
       ...result, resultType: "complete",
       ...(cacheMethods.has(rpc.method) ? { ttlMs: 30_000, cacheScope: "private" } : {}),
@@ -75,11 +79,20 @@ export default {
     if (rpc.method === "initialize") return respond({
       protocolVersion: versions.includes(String(params.protocolVersion)) ? params.protocolVersion : versions[0],
       serverInfo: { name: "gisul", version: env.GISUL_SERVER_VERSION ?? "0.2.0" },
-      capabilities: { resources: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": { directoryRead: true } } },
+      capabilities,
       instructions: "Remote workflow skills. Discover metadata with skills/list, load a selected manifest with skills/get, then read supporting resources only when needed. Keep the returned commit in params._meta['io.gisul/commit'] for subsequent resource reads.",
     });
     if (rpc.method === "ping") return respond({});
-    if (rpc.method === "tools/list") return respond({ tools: [] });
+    if (rpc.method === "tools/list") return respond({ tools: canWrite ? writeTools : [] });
+    if (rpc.method === "tools/call") {
+      if (!canWrite) return rpcError(request, rpc.id, -32001, "A configured write credential is required", 403);
+      try {
+        const result = await skillWrite(env, String(params.name), params.arguments);
+        return respond({ content: [{ type: "text", text: JSON.stringify(result) }], isError: false });
+      } catch (error) {
+        return respond({ content: [{ type: "text", text: error instanceof ReleaseError ? error.message : "Skill write failed" }], isError: true });
+      }
+    }
     if (!["skills/list", "skills/get", "resources/list", "resources/read", "resources/directory/read"].includes(rpc.method)) return rpcError(request, rpc.id, -32601, "Method not found", modern ? 404 : 200);
     try {
       if (params._meta !== undefined && (!params._meta || typeof params._meta !== "object" || Array.isArray(params._meta))) throw new ReleaseError("Invalid request metadata", 400);

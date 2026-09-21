@@ -17,12 +17,12 @@ const uri = "skill://gisul/gisul/flow/SKILL.md";
 const root = uri.slice(0, -8);
 const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022" });
 
-async function fixture(t, bearer = token) {
+async function fixture(t, bearer = token, writes = false) {
   const modules = { "index.js": { type: "esm", contents: (await bundle).outputFiles[0].text } };
   const runtime = new Miniflare({ telemetry: { enabled: false }, logRequests: false, workers: [{ config: {
     type: "worker", name: "direct-test", compatibilityDate: "2026-09-03",
     manifest: { mainModule: "index.js", modules },
-    env: { SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_ALLOWED_ORIGINS: { type: "text", value: "https://client.example" }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
+    env: { ...(writes ? { GISUL_WRITE_TOKEN: { type: "text", value: "fixture-write-token" }, GISUL_GITHUB_TOKEN: { type: "text", value: "fixture-github-token" } } : {}), SKILLS_BUCKET: { type: "r2", name: "SKILLS_BUCKET" }, GISUL_BEARER_TOKEN: { type: "text", value: bearer }, GISUL_ALLOWED_ORIGINS: { type: "text", value: "https://client.example" }, GISUL_PUBLISH_TOKEN: { type: "text", value: publishToken } }, exports: {},
   } }] });
   t.after(() => runtime.dispose());
   const bucket = await runtime.getR2Bucket("SKILLS_BUCKET");
@@ -305,4 +305,19 @@ test("modern Worker validates metadata, emits private cache hints, and preserves
   const unsupported = await rpc("server/discover", future, { accept: "application/json, text/event-stream", "mcp-protocol-version": "2099-01-01", "mcp-method": "server/discover" });
   assert.equal(unsupported.body.error.code, -32022);
   assert.deepEqual(unsupported.body.error.data.supported, ["2026-07-28"]);
+});
+
+
+test("HTTP write discovery and calls require a distinct writer credential", async t => {
+  const { rpc } = await fixture(t, token, true);
+  const writer = { authorization: "Bearer fixture-write-token" };
+  assert.deepEqual((await rpc("tools/list")).body.result.tools, []);
+  assert.equal((await rpc("tools/call", { name: "create_skill", arguments: {} })).status, 403);
+  const init = await rpc("initialize", { protocolVersion: "2025-11-25" }, writer);
+  assert.ok(init.body.result.capabilities.tools);
+  assert.deepEqual((await rpc("tools/list", {}, writer)).body.result.tools.map(t => t.name), ["create_skill", "update_skill", "get_skill_write_status"]);
+  const invalid = await rpc("tools/call", { name: "create_skill", arguments: { name: "../bad", markdown: "bad" } }, writer);
+  assert.equal(invalid.body.result.isError, true);
+  assert.match(invalid.body.result.content[0].text, /Invalid skill name/);
+  assert.equal((await rpc("tools/list", {}, { authorization: `Bearer ${publishToken}` })).status, 401);
 });

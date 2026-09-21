@@ -2,11 +2,11 @@
 
 ## Worker and private R2
 
-The Worker in this checkout serves `/mcp` directly from `SKILLS_BUCKET`. It has no origin URL, tunnel, SSH connection, or filesystem dependency. `GISUL_BEARER_TOKEN` authenticates MCP readers; `GISUL_PUBLISH_TOKEN` authenticates publication. These secrets are separate from the Cloudflare account credentials used by Wrangler. Keep the bucket's public access disabled.
+The Worker in this checkout serves `/mcp` directly from `SKILLS_BUCKET`. It has no origin URL, tunnel, SSH connection, or filesystem dependency. `GISUL_BEARER_TOKEN` authenticates MCP readers; `GISUL_WRITE_TOKEN` authenticates read/write clients and `GISUL_GITHUB_TOKEN` lets the Worker commit only through its fixed skill-content API; `GISUL_PUBLISH_TOKEN` authenticates publication. These secrets are separate from the Cloudflare account credentials used by Wrangler. Keep the bucket's public access disabled.
 
 The production machine endpoint is `https://gisul-mcp.changeroa.workers.dev/mcp`; the publication origin is the same URL without `/mcp`. Its stable workers.dev route is enabled on the existing Worker, with bearer authentication enforced by the Worker. The custom domain `gisul.iyendev.com` also routes to this version, but its zone can return a browser challenge to unattended clients. GitHub Actions and the installed plugin use the stable workers.dev endpoint. Do not depend on a preview alias for ongoing publication or disable security across unrelated zone traffic.
 
-Production activation requires a gated real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Structural migration of unchanged content uses Git-byte and manifest parity; behavioral changes retain the skill repository's separate model evaluation requirements. Local fixture tests do not establish those production results.
+Production activation requires a gated real release published by GitHub Actions, actual installed-plugin reads, and matching Langfuse evidence. Structural migration of unchanged content uses Git-byte and manifest parity; model evaluations and human ratings are optional under the 2026-09-21 user policy. Validation, integrity, latest-main and conditional activation remain required. Local fixture tests do not establish those production results.
 
 ### Current protocol and client
 
@@ -18,7 +18,7 @@ Install the production client over HTTPS:
 node clients/codex/install.mjs --plugin --http-url https://gisul-mcp.changeroa.workers.dev/mcp --bearer-token-file "$HOME/.config/gisul-worker-dev-tools/mcp-bearer"
 ```
 
-This reader exposes search, load and verified file reads. Content changes go through `changeroa/gisul-skills` main and its gated `publish-r2.yml` GitHub Actions workflow on Ubuntu. Neither serving nor publishing requires the Mac mini. The Mac mini is only used as an authenticated Wrangler deployment workstation. Its old Node service is retained separately for rollback and is not in the production request path.
+Reader credentials expose search, load and verified file reads. A write credential additionally exposes create_skill, update_skill and get_skill_write_status. Content changes go through `changeroa/gisul-skills` main and its gated `publish-r2.yml` GitHub Actions workflow on Ubuntu. Neither serving nor publishing requires the Mac mini. The Mac mini is only used as an authenticated Wrangler deployment workstation. Its old Node service is retained separately for rollback and is not in the production request path.
 
 ### Release contract
 
@@ -118,3 +118,11 @@ renames have a short interruption window; the journal and retained backup make
 that state recoverable. Never discard a backup to make a retry succeed.
 
 Plugin installation is a separate step; see [the Codex client](../clients/codex/README.md).
+
+## Authenticated HTTP skill writes
+
+Set distinct `GISUL_WRITE_TOKEN` and `GISUL_GITHUB_TOKEN` Worker secrets. Keep the reader and publication secrets separate. Prefer a repository-scoped GitHub credential for `changeroa/gisul-skills` with Contents write and Actions read. Configure a writing client with a private token file containing the write token; never embed it in URLs or tracked config.
+
+Writes are limited to `skills/<name>/SKILL.md` and, on creation, supporting text files inside that skill. They cannot change workflows or publication policy. All files are committed together to main using a non-forced reference update. Duplicate creation and stale SHA256 edits fail without overwriting. Existing resources are preserved on update. A lost ref-update response triggers one readback, never an automatic second write.
+
+`accepted` means committed, not published. The existing GitHub Actions pipeline validates, uploads immutable release bytes and conditionally promotes current. Poll get_skill_write_status with the returned commit, then reload and compare content. A later active release may include the commit but may also contain subsequent edits. Reader tokens and the publication token do not grant MCP writes. Body limits are 1 MiB for writers and 64 KiB for readers; skill writes allow 768 KiB total and 128 text files.

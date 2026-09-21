@@ -86,7 +86,7 @@ function pinnedParams(meta?: Metadata): { _meta?: Record<string, string> } {
   return meta?.commit ? { _meta: { "io.gisul/commit": meta.commit } } : {};
 }
 
-export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false): McpServer {
+export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false, httpWrites = false): McpServer {
   const cache = new ResponseCache();
   if (typeof client.setNotificationHandler === "function") {
     client.setNotificationHandler(ResourceListChangedNotificationSchema, () => cache.clear());
@@ -220,9 +220,13 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   }));
   if (readOnly) return server;
   const writeAnnotations = { readOnlyHint: false, idempotentHint: false, openWorldHint: true };
+  if (httpWrites) server.registerTool("get_skill_write_status", {
+    description: "Check whether an accepted Git commit is published, pending, or failed. Reload the skill after publication to verify its content.",
+    inputSchema: { commit: z.string().regex(/^[a-f0-9]{40}$/) }, annotations,
+  }, async args => CallToolResultSchema.parse(await client.callTool({ name: "get_skill_write_status", arguments: args })));
   server.registerTool("create_skill", {
     description: "Create a remote SKILL.md when the user requests registration. Never overwrites existing skills. Source defaults to the upstream's first configured root (normally gisul).",
-    inputSchema: { source: z.string().optional(), name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), markdown: z.string().min(1).max(16 * 1024 * 1024) },
+    inputSchema: { source: z.string().optional(), name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), markdown: z.string().min(1).max(16 * 1024 * 1024), ...(httpWrites ? { files: z.record(z.string(), z.string()).optional() } : {}) },
     annotations: { ...writeAnnotations, destructiveHint: false },
   }, async args => {
     try { return CallToolResultSchema.parse(await client.callTool({ name: "create_skill", arguments: args })); }
@@ -275,7 +279,11 @@ async function main() {
     await client.connect(negotiated);
     events.emit({ event: "connect", transport: options.mode, protocol: negotiated.modern ? "2026-07-28" : "legacy" });
     if (!client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]) throw new Error("The upstream gisul is outdated: deploy the SEP-2640 server build first");
-    server = createCodexBridge(client, options.origin, events, options.mode === "http");
+    const advertisedTools = new Set(options.mode === "http" && client.getServerCapabilities()?.tools
+      ? (await client.listTools()).tools.map(tool => tool.name) : []);
+    const httpWrites = options.mode === "http" && !!client.getServerCapabilities()?.tools &&
+      ["create_skill", "update_skill", "get_skill_write_status"].every(name => advertisedTools.has(name));
+    server = createCodexBridge(client, options.origin, events, options.mode === "http" && !httpWrites, httpWrites);
     await server.connect(new StdioServerTransport());
     const close = async () => { if (closing) return; closing = true; await server?.close(); await client.close(); await events.flush(); };
     process.stdin.on("end", () => void close());
