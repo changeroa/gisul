@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { parseUpstreamOptions } from '../dist/codex.js';
 import { pluginConnection } from '../../clients/codex/install-plugin.mjs';
+import { modernParams, MODERN_VERSION } from "../dist/protocol.js";
 
 test('HTTP configuration rejects insecure endpoints, embedded credentials and ambiguous modes', () => {
   const args = ['--origin', 'worker', '--http-url', 'https://skills.example/mcp', '--bearer-token-file', '/secrets/gisul'];
@@ -55,6 +56,19 @@ test('bridge uses authenticated HTTP, preserves release evidence, and recovers a
   };
   const stopOrigin = async () => { if (child?.exitCode === null) { const exit = once(child, 'exit'); child.kill('SIGTERM'); await exit; } };
   t.after(stopOrigin); await startOrigin();
+  const modernCall = async (method, params = {}, overrides = {}) => {
+    const body = { jsonrpc: '2.0', id: 55, method, params: modernParams(params) };
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': MODERN_VERSION, 'Mcp-Method': method, ...(method === 'resources/read' ? { 'Mcp-Name': params.uri } : {}), ...overrides };
+    return fetch(`http://127.0.0.1:${port}/mcp`, {method:'POST',headers,body:JSON.stringify(body)});
+  };
+  const discovery = await modernCall('server/discover');
+  assert.equal(discovery.status,200);assert.deepEqual((await discovery.json()).result.supportedVersions,[MODERN_VERSION]);
+  const mismatch=await modernCall('skills/list',{}, {'Mcp-Method':'tools/list'});
+  assert.equal(mismatch.status,400);assert.equal((await mismatch.json()).error.code,-32020);
+  const badOrigin=await modernCall('skills/list',{}, {Origin:'https://attacker.example'});assert.equal(badOrigin.status,403);
+  const unknown=await modernCall('missing/method');assert.equal(unknown.status,404);
+  const read=await modernCall('resources/read',{uri});assert.equal(read.status,200);
+  const readResult=(await read.json()).result;assert.equal(readResult.resultType,'complete');assert.equal(readResult.cacheScope,'private');
   let seenRequests = 0;
   const proxy = createServer(async (request, response) => {
     try {
@@ -76,6 +90,7 @@ test('bridge uses authenticated HTTP, preserves release evidence, and recovers a
   assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['load_skill', 'read_skill_file', 'search_skills']);
   const call = async (name, args) => { const result = await client.callTool({ name, arguments: args }); assert.ok(!result.isError, JSON.stringify(result)); return JSON.parse(result.content[0].text); };
   const found = await call('search_skills', { query: 'HTTP' }); assert.equal(found.totalMatches, 1);
+  const requestsAfterSearch = seenRequests; await call('search_skills', { query: 'HTTP' }); assert.equal(seenRequests, requestsAfterSearch, 'second search uses the private connection cache');
   const loaded = await call('load_skill', { uri }); assert.equal(loaded.release, 'http-fixture.1'); assert.equal(loaded.manifest_digest, manifestDigest);
   assert.equal((await call('read_skill_file', { skill_uri: uri, uri: uri.replace('SKILL.md', 'guide.md') })).text, contents['guide.md']);
   await stopOrigin();
@@ -85,6 +100,6 @@ test('bridge uses authenticated HTTP, preserves release evidence, and recovers a
   assert.equal((await call('read_skill_file', { skill_uri: uri, uri })).manifest_digest, loaded.manifest_digest);
   await client.close();
   const logs = (await Promise.all((await readdir(join(root, 'events'))).map(file => readFile(join(root, 'events', file), 'utf8')))).join('');
-  assert.match(logs, /"transport":"http"/); assert.match(logs, /"release":"http-fixture.1"/); assert.ok(!logs.includes(token) && !stderr.includes(token));
+  assert.match(logs, /"transport":"http"/); assert.match(logs, /"protocol":"2026-07-28"/); assert.match(logs, /"release":"http-fixture.1"/); assert.ok(!logs.includes(token) && !stderr.includes(token));
   assert.ok(seenRequests > 5);
 });

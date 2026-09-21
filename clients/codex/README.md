@@ -143,7 +143,7 @@ this does not modify Codex itself or guarantee automatic selection for every tas
 ## Behavior and boundaries
 
 - Search returns compact names, descriptions and exact URIs. Same-named skills remain separate. Search uses all literal query words, reads all upstream catalog pages, and sorts matches by URI before applying `offset` (default 0) and `limit` (default 10, maximum 50).
-- Search responses include `totalMatches`, `offset`, and `limit`. When `nextOffset` is present, pass it as `offset` with the same `query` and `limit` to continue; its absence marks the last page. For example, start with `{"query":"review","limit":50}`, then use `{"query":"review","limit":50,"offset":50}` if `nextOffset` is 50. Each call rereads the live catalog, so additions or removals between calls can shift pages; restart from offset 0 if the catalog changes.
+- Search responses include `totalMatches`, `offset`, and `limit`. When `nextOffset` is present, pass it as `offset` with the same `query` and `limit` to continue; its absence marks the last page. For example, start with `{"query":"review","limit":50}`, then use `{"query":"review","limit":50,"offset":50}` if `nextOffset` is 50. Catalog pages may be reused within the upstream TTL (30 seconds on gisul); additions or removals between refreshes can shift pages; restart from offset 0 if the catalog changes.
 - `offset` must be a nonnegative safe integer and `limit` an integer from 1 to 50; invalid values return an MCP tool error. An offset at or beyond `totalMatches` returns an empty page without `nextOffset`, as does a search with no matches.
 - Load fetches the current manifest and only `SKILL.md`. Every file read checks
   SHA-256 and size. Frontmatter must match the manifest.
@@ -202,3 +202,25 @@ node server/dist/codex.js --origin my-server -- /absolute/path/to/server arg1
 To remove the plugin: `codex plugin remove gisul@personal`.
 For the standalone setup, remove the MCP registration with `codex mcp remove gisul`. Remove the installed
 `skills/gisul/SKILL.md` separately if you no longer want the loader.
+
+## Protocol negotiation and memory cache
+
+The upstream adapter probes `server/discover` with MCP `2026-07-28` metadata.
+A compatible modern server receives per-request version/capability metadata;
+legacy stdio errors or a bounded probe timeout fall back to `initialize`.
+Recognized modern errors and malformed discovery results do not silently downgrade.
+HTTP mirrors method, version and resource/tool name into headers and keeps the
+SDK's JSON/SSE response parser. The host-facing tool connection remains compatible
+with existing clients. Connect events record the actual upstream protocol.
+
+Each bridge owns a bounded in-memory response cache (256 entries / 32 MiB).
+It never shares entries across upstream connections or authorization contexts,
+even when a server labels content public. Missing, negative or zero TTL does not
+cache; expiry is checked on demand without background polling or stale-on-error
+fallback. Search caches catalog pages and reads cache resource responses. Each
+file, including a cached file, is still checked against the held digest and size.
+Explicit `load_skill` clears the cache and always retrieves the current manifest;
+write attempts, resource notifications and digest failures also clear it.
+In-flight responses cannot repopulate a cache invalidated after they started.
+Static directory listings come from the pinned manifest and need no optional
+directory RPC or pagination. This does not discover newly added files until reload.

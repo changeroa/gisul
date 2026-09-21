@@ -222,7 +222,7 @@ test("bridge reports release identity, follows explicit aliases, searches keywor
     assert.equal(directory.manifest_digest, loaded.manifest_digest);
     assert.equal(data(await call("read_skill_file", { skill_uri: uri, uri: directory.files[0] })).release, meta.release);
     omitChild = true;
-    assert.equal((await call("read_skill_file", { skill_uri: uri, uri: `${root}references` })).isError, true);
+    assert.equal(data(await call("read_skill_file", { skill_uri: uri, uri: `${root}references` })).files.length, 25, "directory expansion uses the held manifest, not a live listing");
     meta = { ...meta, movedFrom: "skill://wrong/source/delivery/SKILL.md" };
     assert.equal((await call("load_skill", { uri: oldUri })).isError, true, "an undeclared redirect must fail");
   } finally { await client.close(); await server.close(); }

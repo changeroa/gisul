@@ -134,3 +134,27 @@ Secrets live outside the repository:
 ~/.config/secrets/gisul-mcp-bearer-token
 ~/.config/secrets/gisul-mcp-admin-token
 ```
+
+## Modern and legacy protocol support
+
+The server supports MCP `2026-07-28` per-request metadata on stdio and HTTP,
+alongside legacy `initialize` connections. `server/discover` advertises the modern
+version, Resources and Skills capabilities. Modern requests require
+`io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta`. Unsupported versions
+return `-32022`; missing metadata returns `-32602`. Modern HTTP validates mirrored
+version/method/name headers, origin and Accept, and uses no protocol session.
+HTTP remains authenticated and read-only.
+
+Successful discovery, catalog, resource and tool-list responses include
+`resultType: "complete"`, `ttlMs: 30000`, and `cacheScope: "private"`. Directory
+responses have `resultType` but are not cacheable results. All content is private
+across authorization contexts, including SSH-served skills. HTTP uses `no-store`
+at the transport layer; the MCP-aware bridge can use the explicit private hints.
+TTL never replaces manifest verification and does not guarantee unchanged content.
+
+`src/protocol.ts` isolates the modern wire adapter from the pinned legacy SDK.
+The server shares the same handlers for both eras; the adapter does not add MRTR,
+subscriptions, dynamic skills or execution capabilities. Modern client support is
+scoped to the gisul methods. Existing clients can continue using legacy MCP.
+The deployment smoke checks modern stdio and HTTP, plus legacy initialization.

@@ -11,6 +11,9 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { JSONRPCRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ServerProtocolTransport, MODERN_VERSION, VERSION_KEY, CAPS_KEY, cacheHints, decodeHeader } from "./protocol.js";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { parse as parseYaml } from "yaml";
@@ -727,10 +730,15 @@ async function listSkillResourcesForClient(): Promise<
 }
 
 function registerSkillsExtension(server: McpServer): void {
+  server.server.setRequestHandler(z.object({ method: z.literal("server/discover"), params: z.object({ _meta: z.record(z.string(), z.unknown()) }) }), async () => ({
+    resultType: "complete", supportedVersions: [MODERN_VERSION], ...cacheHints,
+    capabilities: { resources: {}, tools: {}, extensions: { [SKILLS_EXTENSION_ID]: { directoryRead: true } } },
+    _meta: { "io.modelcontextprotocol/serverInfo": { name: "gisul", version: SERVER_VERSION } },
+  }));
   server.server.setRequestHandler(SkillsListRequestSchema, async () => {
     const release = await readRelease();
     const skills = await listSkillEntries();
-    return { resultType: "complete", skills, _meta: await releaseMetadata(release, skills, true) };
+    return { resultType: "complete", ...cacheHints, skills, _meta: await releaseMetadata(release, skills, true) };
   });
 
   server.server.setRequestHandler(SkillsGetRequestSchema, async (request) => {
@@ -739,17 +747,17 @@ function registerSkillsExtension(server: McpServer): void {
     const canonical = await resolveSkillAlias(uri);
     const entry = (await listSkillEntries()).find((candidate) => candidate.uri === canonical);
     if (!entry) throw new McpError(ErrorCode.InvalidParams, `Not a skill served by this server: ${uri}`);
-    return { resultType: "complete", skill: entry, _meta: { ...await releaseMetadata(release, [entry]), ...(canonical !== uri ? { movedFrom: uri } : {}) } };
+    return { resultType: "complete", ...cacheHints, skill: entry, _meta: { ...await releaseMetadata(release, [entry]), ...(canonical !== uri ? { movedFrom: uri } : {}) } };
   });
 
   server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params?.uri ?? "";
     const resource = await readSkillResourceByUri(uri);
-    return { contents: [{ uri, mimeType: resource.mimeType, text: resource.text, blob: resource.blob }] };
+    return { resultType: "complete", ...cacheHints, contents: [{ uri, mimeType: resource.mimeType, text: resource.text, blob: resource.blob }] };
   });
 
   server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: await listSkillResourcesForClient(),
+    resultType: "complete", ...cacheHints, resources: await listSkillResourcesForClient(),
   }));
 
   server.server.setRequestHandler(SkillsDirectoryReadRequestSchema, async (request) => ({
@@ -1205,7 +1213,7 @@ async function showDashboard(req: Request, res: Response, adminToken: string | u
 async function startStdio(): Promise<void> {
   const server = createGisulServer(true);
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await server.connect(new ServerProtocolTransport(transport));
 }
 
 async function startHttp(): Promise<void> {
@@ -1257,6 +1265,41 @@ async function startHttp(): Promise<void> {
       return;
     }
 
+    const meta = req.body?.params?._meta;
+    const modern = req.body?.method === "server/discover" || meta?.[VERSION_KEY] !== undefined || meta?.[CAPS_KEY] !== undefined || (req.get("MCP-Protocol-Version") ?? "") >= MODERN_VERSION;
+    if (modern) {
+      const fail = (code: number, message: string) => res.status(400).json({ jsonrpc: "2.0", id: req.body?.id ?? null, error: { code, message } });
+      const origin = req.get("Origin");
+      if (origin) {
+        let hostname = ""; try { hostname = new URL(origin).hostname; } catch { /* invalid origin */ }
+        if (!allowedHosts.includes(hostname)) { res.status(403).json({ error: "Invalid origin" }); return; }
+      }
+      if (!(req.get("Accept")?.includes("application/json") && req.get("Accept")?.includes("text/event-stream"))) { res.status(406).end(); return; }
+      const parsed = JSONRPCRequestSchema.safeParse(req.body);
+      if (!parsed.success) { fail(-32600, "Invalid JSON-RPC request"); return; }
+      if (!meta || typeof meta[VERSION_KEY] !== "string" || typeof meta[CAPS_KEY] !== "object" || !meta[CAPS_KEY] || Array.isArray(meta[CAPS_KEY])) { fail(-32602, "Required request metadata is missing"); return; }
+      const named = ["tools/call", "resources/read", "prompts/get"].includes(parsed.data.method);
+      if (req.get("MCP-Protocol-Version") !== meta[VERSION_KEY] || req.get("Mcp-Method") !== parsed.data.method || (named && decodeHeader(req.get("Mcp-Name")) !== (parsed.data.params?.name ?? parsed.data.params?.uri))) { fail(-32020, "Request headers do not match the body"); return; }
+      const server = createGisulServer();
+      let finish!: () => void;
+      const done = new Promise<void>(resolve => { finish = resolve; });
+      const transport: Transport = {
+        start: async () => {}, close: async () => { transport.onclose?.(); },
+        send: async message => {
+          if (!("id" in message) || message.id !== parsed.data.id) return;
+          const code = "error" in message ? message.error.code : undefined;
+          res.status(code === -32601 ? 404 : code === -32603 ? 500 : code ? 400 : 200).set("Cache-Control", "no-store").json(message);
+          finish();
+        },
+      };
+      res.on("close", finish);
+      try {
+        await server.connect(new ServerProtocolTransport(transport));
+        transport.onmessage?.(parsed.data);
+        await done;
+      } finally { await server.close(); }
+      return;
+    }
     const server = createGisulServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -1264,7 +1307,7 @@ async function startHttp(): Promise<void> {
     });
 
     try {
-      await server.connect(transport);
+      await server.connect(new ServerProtocolTransport(transport, true));
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
       console.error("Error handling MCP request:", error);
