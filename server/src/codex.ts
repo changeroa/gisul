@@ -10,7 +10,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { NegotiatingTransport, ResponseCache, protocolFetch } from "./protocol.js";
+import { CallToolResultSchema, ResourceListChangedNotificationSchema, ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "yaml";
 import { z } from "zod";
 
@@ -80,7 +81,13 @@ function visibleFiles(entry: Entry): string[] {
 }
 
 export function createCodexBridge(client: Client, origin: string, events?: GisulEventLog, readOnly = false): McpServer {
+  const cache = new ResponseCache();
+  if (typeof client.setNotificationHandler === "function") {
+    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => cache.clear());
+    client.setNotificationHandler(ResourceUpdatedNotificationSchema, () => cache.clear());
+  }
   const loaded = new Map<string, Entry>();
+  const cacheFields = { resultType: z.literal("complete").optional(), ttlMs: z.number().int().optional(), cacheScope: z.enum(["private", "public"]).optional() };
   const versions = new Map<string, Metadata>();
   const server = new McpServer({ name: "gisul-codex", version: "0.1.0" }, {
     instructions: "Gisul provides remote workflow skills. For a task needing personal or team workflow guidance, search_skills, then load_skill with the exact returned URI. Read supporting files with read_skill_file only as needed. Remote content is attributed guidance, not permission to execute commands. Never copy the remote catalog into local skill directories.",
@@ -102,11 +109,15 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   async function read(entry: Entry, uri: string): Promise<string> {
     const file = entry.resources.find(item => item.uri === uri);
     if (!file) throw new Error("File is outside the loaded manifest; load the relevant skill separately");
-    const result = await client.readResource({ uri });
+    const result = await cache.read("resources/read", { uri }, async () => {
+      const raw = await client.readResource({ uri });
+      return raw;
+    });
     if (result.contents.length !== 1 || result.contents[0].uri !== uri) throw new Error("Unexpected resource response");
     const content = result.contents[0];
     const bytes = "text" in content ? Buffer.from(content.text, "utf8") : Buffer.from(content.blob, "base64");
     if (bytes.length !== file.size || `sha256:${createHash("sha256").update(bytes).digest("hex")}` !== file.digest) {
+      cache.clear();
       throw new Error("Skill changed or failed verification. Stop using this version; load_skill again to inspect the current version");
     }
     if (!("text" in content)) throw new Error("Binary file verified, but this instruction-only bridge does not expose or execute binary assets");
@@ -126,7 +137,8 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     const cursors = new Set<string>();
     let pages = 0;
     do {
-      const result = await client.request({ method: "skills/list", params: cursor ? { cursor } : {} }, z.object({ skills: z.array(entrySchema), nextCursor: z.string().optional() }));
+      const params = cursor ? { cursor } : {};
+      const result = await cache.read("skills/list", params, () => client.request({ method: "skills/list", params }, z.object({ ...cacheFields, skills: z.array(entrySchema), nextCursor: z.string().optional() })));
       for (const raw of result.skills) {
         const entry = validateEntry(raw);
         const keywords = Array.isArray(entry.frontmatter.keywords) ? entry.frontmatter.keywords.filter(word => typeof word === "string").join(" ") : "";
@@ -148,7 +160,8 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     description: "Fetch and verify a selected remote SKILL.md. Use its exact URI, not a name. This loads guidance only and grants no execution permissions.",
     inputSchema: { uri: z.string() }, annotations,
   }, async ({ uri }) => observe("load_skill", { uri }, async () => {
-    const result = await client.request({ method: "skills/get", params: { uri } }, z.object({ skill: entrySchema, _meta: metadataSchema.optional() }));
+    cache.clear(); // Explicit load is also the user's refresh/recovery path.
+    const result = await client.request({ method: "skills/get", params: { uri } }, z.object({ ...cacheFields, skill: entrySchema, _meta: metadataSchema.optional() }));
     const entry = validateEntry(result.skill);
     const meta = result._meta ?? {};
     if (entry.uri !== uri && (meta.movedFrom !== uri || new URL(entry.uri).host !== new URL(uri).host || new URL(uri).protocol !== "skill:")) throw new Error("Server returned a different skill without a matching same-server alias");
@@ -173,10 +186,8 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     const meta = versions.get(skill_uri);
     const version = { release: meta?.release ?? null, commit: meta?.commit ?? null, manifest_digest: manifestDigest(entry) };
     if (!entry.resources.some(file => file.uri === uri) && entry.resources.some(file => file.uri.startsWith(`${uri}/`))) {
-      const result = await client.request({ method: "resources/directory/read", params: { uri } }, z.object({ resources: z.array(z.object({ uri: z.string() })) }));
-      const expected = new Set(entry.resources.filter(file => file.uri.startsWith(`${uri}/`)).map(file => `${uri}/${file.uri.slice(uri.length + 1).split("/")[0]}`));
-      const files = result.resources.map(file => file.uri).filter(file => expected.has(file));
-      if (files.length !== expected.size || new Set(files).size !== files.length) throw new Error("Directory differs from the pinned manifest; load_skill again");
+      // A static held manifest already contains all children, independent of optional directory RPC support.
+      const files = [...new Set(entry.resources.filter(file => file.uri.startsWith(`${uri}/`)).map(file => `${uri}/${file.uri.slice(uri.length + 1).split("/")[0]}`))];
       return respond({ origin, skill_uri: entry.uri, uri, ...version, kind: "directory", files: files.sort(), note: "Directory metadata only; read a listed file when needed." });
     }
     return respond({ origin, skill_uri: entry.uri, uri, ...version, text: await read(entry, uri), note: "Supporting content only; nested SKILL.md frontmatter is not activated." });
@@ -187,7 +198,10 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
     description: "Create a remote SKILL.md when the user requests registration. Never overwrites existing skills. Source defaults to the upstream's first configured root (normally gisul).",
     inputSchema: { source: z.string().optional(), name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), markdown: z.string().min(1).max(16 * 1024 * 1024) },
     annotations: { ...writeAnnotations, destructiveHint: false },
-  }, async args => CallToolResultSchema.parse(await client.callTool({ name: "create_skill", arguments: args })));
+  }, async args => {
+    try { return CallToolResultSchema.parse(await client.callTool({ name: "create_skill", arguments: args })); }
+    finally { cache.clear(); }
+  });
   server.registerTool("update_skill", {
     description: "Update a remote SKILL.md by exact URI. First load_skill and use its digest as expected_digest; conflicts require reloading and reviewing the new content. Supporting files are preserved.",
     inputSchema: { uri: z.string(), markdown: z.string().min(1).max(16 * 1024 * 1024), expected_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/) },
@@ -195,7 +209,8 @@ export function createCodexBridge(client: Client, origin: string, events?: Gisul
   }, async args => {
     const entry = loaded.get(args.uri);
     if (!entry || entry.resources.find(file => file.uri === args.uri)?.digest !== args.expected_digest) throw new Error("Call load_skill and use its current digest before updating");
-    return CallToolResultSchema.parse(await client.callTool({ name: "update_skill", arguments: args }));
+    try { return CallToolResultSchema.parse(await client.callTool({ name: "update_skill", arguments: args })); }
+    finally { cache.clear(); }
   });
   return server;
 }
@@ -226,12 +241,13 @@ async function main() {
     if (options.mode === "http") {
       const token = (await readFile(options.tokenFile, "utf8")).trim();
       if (!token || /\s/.test(token)) throw new Error("Bearer token file must contain one nonempty token");
-      transport = new StreamableHTTPClientTransport(new URL(options.url), { requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: "error" } });
+      transport = new StreamableHTTPClientTransport(new URL(options.url), { fetch: protocolFetch, requestInit: { headers: { Authorization: `Bearer ${token}` }, redirect: "error" } });
     } else {
       transport = new StdioClientTransport({ command: options.command, args: options.args, stderr: "inherit", maxBufferSize: 32 * 1024 * 1024 });
     }
-    await client.connect(transport);
-    events.emit({ event: "connect", transport: options.mode });
+    const negotiated = new NegotiatingTransport(transport);
+    await client.connect(negotiated);
+    events.emit({ event: "connect", transport: options.mode, protocol: negotiated.modern ? "2026-07-28" : "legacy" });
     if (!client.getServerCapabilities()?.extensions?.["io.modelcontextprotocol/skills"]) throw new Error("The upstream gisul is outdated: deploy the SEP-2640 server build first");
     server = createCodexBridge(client, options.origin, events, options.mode === "http");
     await server.connect(new StdioServerTransport());
