@@ -131,6 +131,17 @@ test("real HTTP bridge keeps old bodies and directories pinned while a new conne
   assert.ok(evidence.some(e => e.event === "load_skill" && e.commit === a.identity.commit && e.release === "20260917.3"));
   assert.ok(evidence.some(e => e.event === "read_skill_file" && e.commit === a.identity.commit));
   assert.ok(evidence.some(e => e.event === "search" && e.commit === b.identity.commit));
+  const refreshed = await first("load_skill", { uri });
+  assert.equal(refreshed.commit, b.identity.commit);
+  assert.notEqual(refreshed.load_id, loaded.load_id);
+  const oldRead = { skill_uri: uri, uri: `${root}references/guide-0.md`, load_id: loaded.load_id };
+  assert.equal((await first("read_skill_file", oldRead)).text, "Supporting a-0");
+  const readCount = wireReads.length;
+  assert.equal((await first("read_skill_file", oldRead)).text, "Supporting a-0");
+  assert.equal(wireReads.length, readCount, "old snapshot reads retain modern private caching");
+  assert.equal((await first("search_skills", { commit: found.commit })).commit, a.identity.commit);
+  assert.equal((await first("load_skill", { uri, commit: found.commit })).markdown, a.markdown);
+
 });
 
 test("direct reads reject corrupt bytes, incomplete pins, aliases outside the release, and traversal", async t => {

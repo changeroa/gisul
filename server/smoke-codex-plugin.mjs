@@ -16,11 +16,14 @@ try {
   if (!found.skills.length) throw new Error("No skills returned from upstream");
   if (found.totalMatches > 1) {
     if (found.nextOffset !== 1) throw new Error("Outdated bridge: search_skills did not return nextOffset");
-    const next = parseResult(await client.callTool({ name: "search_skills", arguments: { limit: 1, offset: found.nextOffset } }));
+    const next = parseResult(await client.callTool({ name: "search_skills", arguments: { limit: 1, offset: found.nextOffset, ...(found.commit ? { commit: found.commit } : {}) } }));
     if (next.offset !== 1 || next.skills[0]?.uri === found.skills[0].uri) throw new Error("Bridge pagination did not advance");
   }
-  const loaded = parseResult(await client.callTool({ name: "load_skill", arguments: { uri: found.skills[0].uri } }));
-  const reread = parseResult(await client.callTool({ name: "read_skill_file", arguments: { skill_uri: loaded.uri, uri: loaded.uri } }));
+  const loaded = parseResult(await client.callTool({ name: "load_skill", arguments: { uri: found.skills[0].uri, ...(found.commit ? { commit: found.commit } : {}) } }));
+  if (!/^[a-f0-9]{64}$/.test(loaded.load_id ?? "")) throw new Error("Missing load identity");
+  if (found.commit && loaded.commit !== found.commit) throw new Error("Selected release changed");
+  const reread = parseResult(await client.callTool({ name: "read_skill_file", arguments: { skill_uri: loaded.uri, uri: loaded.uri, load_id: loaded.load_id } }));
+  if (reread.load_id !== loaded.load_id) throw new Error("Read lost load identity");
   if (loaded.markdown !== reread.text) throw new Error("Read mismatch");
   console.log(JSON.stringify({ origin: found.origin, matches: found.totalMatches, nextOffset: found.nextOffset, loaded: loaded.uri, verifiedRead: true }));
 } finally { await client.close(); }
