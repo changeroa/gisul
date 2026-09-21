@@ -142,7 +142,7 @@ this does not modify Codex itself or guarantee automatic selection for every tas
 
 ## Behavior and boundaries
 
-- Search returns compact names, descriptions and exact URIs. Same-named skills remain separate. Search uses all literal query words, reads all upstream catalog pages, and sorts matches by URI before applying `offset` (default 0) and `limit` (default 10, maximum 50).
+- Search returns compact names, descriptions and exact URIs. Same-named skills remain separate. Search uses all literal query words, reads all upstream catalog pages, and sorts matches by URI before applying `offset` (default 0) and `limit` (default 5, maximum 50).
 - Search responses include `totalMatches`, `offset`, and `limit`. When `nextOffset` is present, pass it as `offset` with the same `query` and `limit` to continue; its absence marks the last page. For example, start with `{"query":"review","limit":50}`, then use `{"query":"review","limit":50,"offset":50}` if `nextOffset` is 50. Catalog pages may be reused within the upstream TTL (30 seconds on gisul); additions or removals between refreshes can shift pages; restart from offset 0 if the catalog changes.
 - `offset` must be a nonnegative safe integer and `limit` an integer from 1 to 50; invalid values return an MCP tool error. An offset at or beyond `totalMatches` returns an empty page without `nextOffset`, as does a search with no matches.
 - Load fetches the current manifest and only `SKILL.md`. Every file read checks
@@ -224,3 +224,41 @@ write attempts, resource notifications and digest failures also clear it.
 In-flight responses cannot repopulate a cache invalidated after they started.
 Static directory listings come from the pinned manifest and need no optional
 directory RPC or pagination. This does not discover newly added files until reload.
+## Opt-in discovery modes and version selection
+
+`search_skills` keeps its original substring matching and URI order when `mode`
+is omitted or `legacy`. New clients can opt into `automatic` or `explicit`.
+Both normalize case, Unicode width/composition and whitespace, require every
+query term to match, and rank exact names before exact keywords, then other
+name/keyword/description matches. URI order breaks ties; same-named skills from
+different sources remain distinct. Keywords come from the skill's versioned
+frontmatter, so adding bilingual discovery terms is a content change.
+Latin alphanumeric terms match whole words in these modes: `UI` does not match
+inside `build`, and `hate` does not match inside `whatever`. Non-Latin terms and
+compound names retain substring matching after Unicode normalization.
+
+`automatic` excludes entries with `disable-model-invocation: true` and requires
+a nonempty subject. `explicit` includes them for a user-requested workflow.
+These modes return `invocation` and the SKILL.md `digest` with each match. This
+is a discovery policy, not an authorization boundary. The tool does not schedule
+automatic searches or change global Codex instructions.
+
+Continue a result page with the same query, mode, limit and returned `commit`.
+Omit commit on a new task to discover the current release. Passing that commit
+to `load_skill` selects the same immutable release; an upstream that cannot
+honor it fails instead of silently supplying current content.
+
+Each load returns `load_id`. Pass it with `skill_uri` and a listed file or
+directory URI to `read_skill_file` to retain that manifest even after reloading
+the same skill at a newer commit. Without `load_id`, existing clients continue
+using the latest load for that URI in their connection. A load ID belongs to its
+connection and the exact skill/declared alias; it cannot read another skill.
+
+
+Search responses contain description excerpts of at most 240 Unicode code points,
+with `descriptionTruncated: true` when shortened. The default page is five items.
+Full instructions and frontmatter are available through verified `load_skill`.
+This reduces model-facing metadata, not the size of upstream catalog requests.
+Default matching/order stays legacy; name/keyword ranking is available in the
+explicitly selected modes above. A new task should omit commit; continuation and
+selection should carry the returned commit (when non-null).
