@@ -29,8 +29,35 @@ hook without modifying the workspace file. Unit tests also cover credential
 profile selection, repeat injection, no-write dry runs, protocol-clean stdout
 and propagation of child failure status.
 
-OAuth sign-in, a live remote MCP call through OpenClaw, and model compliance with
-discovery guidance have not been verified by these offline checks. The runtime
-smoke uses private exports only in its test adapter; the distributed plugin has
-no dependency on OpenClaw's internal module paths. Run the smoke again after an
-OpenClaw upgrade. Format changes may require updating the test adapter.
+Live verification on 2026-10-01 also completed OAuth sign-in and an actual local
+OpenClaw agent turn: search → pinned skill load → supporting-file read, with
+three tool calls and no tool errors. That profile uses the Codex harness, so a
+separate native MCP test loaded **only the installed OpenClaw bundle** in an
+empty workspace to exclude inherited Codex connections. It exposed exactly the
+three read tools and verified both returned bodies against their SHA-256 digests.
+The observed release was `20261001.19` at commit
+`054052e608b6ea35eea59480917121a8ee30f3e0`.
+
+After installing and signing in, reproduce the bundle-only live test:
+
+```sh
+node scripts/check-openclaw-live.mjs \
+  --openclaw-root /path/to/installed/openclaw \
+  --plugin-root "$HOME/.openclaw/extensions/gisul-openclaw"
+```
+
+Use your actual profile path. This makes read-only network calls and prints
+metadata/digests, never credentials or remote workflow bodies. It uses the
+already installed bundle and its OAuth cache; it does not sign in, rewrite
+OpenClaw configuration, restart a Gateway, or send channel messages.
+
+Sanitized evidence: [native bundle calls](../../docs/evidence/openclaw-20261001/native-mcp.json)
+and [agent tool calls](../../docs/evidence/openclaw-20261001/agent-calls.json).
+The agent reported an unrelated unresolved Slack secret during message-tool
+catalog discovery; no Slack action was requested and all three Gisul calls
+succeeded. General model compliance on future tasks is not established by one
+explicit smoke. Existing Gateway sessions were not restarted or validated.
+
+Compatibility scripts use private exports only in their test adapters; the
+plugin has no dependency on OpenClaw's internal module paths. Run the checks
+after an OpenClaw upgrade; format changes may require updating the adapters.
