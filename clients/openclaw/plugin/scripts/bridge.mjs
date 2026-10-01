@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -79,7 +79,7 @@ export async function run(options = {}) {
   } finally { for (const [signal, handler] of handlers) process.off(signal, handler); }
 }
 
-if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(resolve(process.argv[1])) === self) {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) console.log("Usage: node bridge.mjs [--login] [--endpoint HTTPS_MCP_URL] [--state-dir PATH] [--dry-run]\nNo flags: serve MCP over stdio. --login: sign in and list tools. Use the same OpenClaw profile and endpoint for login and runtime.");
