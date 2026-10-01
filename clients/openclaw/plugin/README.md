@@ -20,6 +20,12 @@ tools. Complete sign-in before starting the agent. Credentials stay in
 `<OpenClaw state directory>/gisul/auth`, outside the replaceable plugin folder.
 No credentials are copied from Codex or embedded in the plugin.
 
+The default endpoint is `https://gisul.arkpoint.dev/mcp`. A bundle prepared for
+another deployment stores its endpoint in `gisul-client.json`; login and runtime
+both use that endpoint. For IYEN this is `https://gisul.iyendev.com/mcp`, with the
+GitHub account allowed by that deployment. `--endpoint` overrides the URL for a
+single invocation; prefer a prepared bundle for a permanent installation.
+
 For a named profile, keep installation, sign-in and the Gateway together:
 
 ```sh

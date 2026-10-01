@@ -1,24 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import hook from "../../clients/openclaw/plugin/hooks/gisul-discovery/handler.js";
 import { bridgePlan, parseArgs, resolveStateDir } from "../../clients/openclaw/plugin/scripts/bridge.mjs";
 import { prepareExisting } from "../../clients/openclaw/prepare-existing.mjs";
+import { prepareOAuth } from "../../clients/openclaw/prepare-oauth.mjs";
 
 const bundle = fileURLToPath(new URL("../../clients/openclaw/plugin/", import.meta.url));
 const bridge = join(bundle, "scripts/bridge.mjs");
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "gisul-openclaw-unit-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gisul-openclaw-unit-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
-function execute(args, env, input = "") {
+function execute(args, env, input = "", script = bridge) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bridge, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [script, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", x => stdout += x);
     child.stderr.on("data", x => stderr += x);
@@ -27,6 +28,28 @@ function execute(args, env, input = "") {
     child.stdin.end(input);
   });
 }
+
+test("prepared OAuth bundle uses the selected endpoint for both login and runtime", async t => {
+  const root = await fixture(t), output = join(root, "extensions/gisul-openclaw");
+  await mkdir(join(root, "extensions"));
+  await prepareOAuth(output, "https://gisul.iyendev.com/mcp");
+  const script = join(output, "scripts/bridge.mjs");
+  const runtimeResult = await execute(["--dry-run"], {}, "", script);
+  const loginResult = await execute(["--login", "--dry-run"], {}, "", script);
+  assert.equal(runtimeResult.code, 0, runtimeResult.stderr);
+  assert.equal(loginResult.code, 0, loginResult.stderr);
+  const runtime = JSON.parse(runtimeResult.stdout);
+  const login = JSON.parse(loginResult.stdout);
+  assert.equal(runtime.args[2], "https://gisul.iyendev.com/mcp");
+  assert.equal(login.args[3], runtime.args[2]);
+  assert.equal(runtime.env.MCP_REMOTE_CONFIG_DIR, join(root, "gisul/auth"));
+  assert.deepEqual(runtime.env, login.env);
+  await assert.rejects(prepareOAuth(output, "https://gisul.iyendev.com/mcp"), { code: "EEXIST" });
+  for (const endpoint of ["http://host/mcp", "https://user:secret@host/mcp", "https://host/mcp?token=x", "https://host/other", "https://host/mcp#x"]) {
+    await assert.rejects(prepareOAuth(join(root, "invalid"), endpoint));
+  }
+  await assert.rejects(access(join(root, "invalid")), { code: "ENOENT" });
+});
 
 test("existing-MCP bundle adds guidance without replacing transport or credentials", async t => {
   const root = await fixture(t), output = join(root, "existing");

@@ -14,6 +14,22 @@ node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 Use the same profile for installation, login and the Gateway. No existing user
 configuration changes merely by checking out this client.
 
+To use another OAuth deployment, prepare a full bundle with its endpoint:
+
+```sh
+node clients/openclaw/prepare-oauth.mjs --output /absolute/new/gisul-iyen --endpoint https://gisul.iyendev.com/mcp
+openclaw plugins install /absolute/new/gisul-iyen
+node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
+```
+
+The selected endpoint is kept in the installed bundle's `gisul-client.json`, so
+login and MCP startup use the same server. The output directory must be new.
+When migrating an existing installation, privately back up its configuration and
+bundle, verify the OAuth connection first, then remove only the independently
+registered `mcp.servers.gisul` entry so it cannot override the bundle connection.
+Keep other servers and the previous files for rollback. Refresh the Gateway and
+verify a new session after the switch.
+
 If the host already has a working `mcp.servers.gisul` registration, preserve it
 and prepare a loader-only bundle instead of adding the default OAuth bridge:
 
