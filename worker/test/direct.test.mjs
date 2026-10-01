@@ -15,7 +15,7 @@ const token = "direct-worker-fixture-token";
 const publishToken = "release-publisher-fixture-token";
 const uri = "skill://gisul/gisul/flow/SKILL.md";
 const root = uri.slice(0, -8);
-const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022" });
+const bundle = build({ entryPoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))], bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:workers"] });
 
 async function fixture(t, bearer = token, writes = false, outbound) {
   const modules = { "index.js": { type: "esm", contents: (await bundle).outputFiles[0].text } };
