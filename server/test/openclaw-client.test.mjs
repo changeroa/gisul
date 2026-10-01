@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { spawn } from "node:child_process";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import hook from "../../clients/openclaw/plugin/hooks/gisul-discovery/handler.js";
+import { bridgePlan, parseArgs, resolveStateDir } from "../../clients/openclaw/plugin/scripts/bridge.mjs";
+
+const bundle = fileURLToPath(new URL("../../clients/openclaw/plugin/", import.meta.url));
+const bridge = join(bundle, "scripts/bridge.mjs");
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), "gisul-openclaw-unit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
+function execute(args, env, input = "") {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [bridge, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", x => stdout += x);
+    child.stderr.on("data", x => stderr += x);
+    child.on("error", reject);
+    child.on("close", code => resolve({ code, stdout, stderr }));
+    child.stdin.end(input);
+  });
+}
+
+test("bundle declares only its loader, bootstrap hook and read-only OAuth bridge", async () => {
+  const manifest = JSON.parse(await readFile(join(bundle, ".codex-plugin/plugin.json"), "utf8"));
+  const mcp = JSON.parse(await readFile(join(bundle, ".mcp.json"), "utf8"));
+  assert.equal(manifest.name, "gisul-openclaw");
+  assert.equal(manifest.hooks, "./hooks/");
+  assert.deepEqual(Object.keys(mcp.mcpServers), ["gisul"]);
+  assert.deepEqual(mcp.mcpServers.gisul.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/bridge.mjs"]);
+  const normal = bridgePlan({ stateDir: "/profile with spaces" }, {});
+  const login = bridgePlan({ stateDir: "/profile with spaces", login: true }, {});
+  assert.equal(normal.env.MCP_REMOTE_CONFIG_DIR, "/profile with spaces/gisul/auth");
+  assert.deepEqual(normal.env, login.env);
+  assert.deepEqual(normal.args.slice(2), login.args.slice(3));
+  assert.equal(JSON.parse(normal.args.at(-1)).scope, "skills:read");
+  assert.ok(normal.args.includes("mcp-remote@0.14.3"));
+  assert.equal(parseArgs(["--login", "--dry-run"]).login, true);
+  assert.throws(() => parseArgs(["--state-dir"]), /incomplete/);
+});
+
+test("credentials follow a copied install, explicit state override or source profile", () => {
+  const installed = "/profiles/team/extensions/gisul-openclaw/scripts/bridge.mjs";
+  assert.equal(resolveStateDir({}, { OPENCLAW_STATE_DIR: "/other" }, "/user", installed), "/profiles/team");
+  assert.equal(resolveStateDir({ stateDir: "/explicit" }, {}, "/user", installed), "/explicit");
+  assert.equal(resolveStateDir({}, { OPENCLAW_PROFILE: "qa" }, "/user", "/source/scripts/bridge.mjs"), "/user/.openclaw-qa");
+  assert.equal(resolveStateDir({}, { OPENCLAW_STATE_DIR: "~/custom", OPENCLAW_HOME: "/effective" }, "/user", "/source/scripts/bridge.mjs"), "/effective/custom");
+  assert.throws(() => resolveStateDir({}, { OPENCLAW_PROFILE: "../other" }, "/user", "/source/scripts/bridge.mjs"), /Invalid/);
+});
+
+test("bootstrap preserves existing instructions and cached objects without duplicate injection", () => {
+  const original = { name: "AGENTS.md", path: "/work/AGENTS.md", content: "Existing rules", missing: false };
+  const event = { type: "agent", action: "bootstrap", context: { workspaceDir: "/work", bootstrapFiles: [original] } };
+  hook(event);
+  assert.equal(original.content, "Existing rules");
+  const first = event.context.bootstrapFiles[0].content;
+  assert.ok(first.startsWith("Existing rules\n\n<gisul-discovery>"));
+  hook(event);
+  assert.equal(event.context.bootstrapFiles[0].content, first);
+  const unrelated = { ...event, type: "message", context: { bootstrapFiles: [] } };
+  hook(unrelated);
+  assert.deepEqual(unrelated.context.bootstrapFiles, []);
+  for (const files of [[], [{ name: "AGENTS.md", path: "/work/AGENTS.md", missing: true }]]) {
+    const next = { ...event, context: { workspaceDir: "/work", bootstrapFiles: files } };
+    hook(next);
+    assert.equal(files[0].missing, false);
+    assert.equal(files[0].path, "/work/AGENTS.md");
+    assert.match(files[0].content, /search_skills/);
+  }
+});
+
+test("dry run creates no auth state; subprocess keeps stdout protocol-clean and failure status", async t => {
+  const root = await fixture(t);
+  const state = join(root, "state");
+  const dry = await execute(["--state-dir", state, "--dry-run"], {});
+  assert.equal(dry.code, 0);
+  assert.equal(JSON.parse(dry.stdout).env.MCP_REMOTE_CONFIG_DIR, join(state, "gisul/auth"));
+  await assert.rejects(access(state), { code: "ENOENT" });
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  const npx = join(bin, "npx");
+  await writeFile(npx, `#!${process.execPath}\nprocess.stderr.write('fixture bridge diagnostic\\n');\nprocess.stdin.pipe(process.stdout);\nprocess.stdin.on('end', () => { process.exitCode = Number(process.env.GISUL_TEST_EXIT || 0); });\n`);
+  await chmod(npx, 0o700);
+  const input = '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n';
+  const result = await execute(["--state-dir", state], { PATH: bin + delimiter + process.env.PATH, GISUL_TEST_EXIT: "7" }, input);
+  assert.equal(result.code, 7);
+  assert.equal(result.stdout, input);
+  assert.match(result.stderr, /fixture bridge diagnostic/);
+  assert.equal((await stat(join(state, "gisul/auth"))).mode & 0o777, 0o700);
+});
