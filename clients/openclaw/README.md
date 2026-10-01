@@ -14,6 +14,21 @@ node "$HOME/.openclaw/extensions/gisul-openclaw/scripts/bridge.mjs" --login
 Use the same profile for installation, login and the Gateway. No existing user
 configuration changes merely by checking out this client.
 
+If the host already has a working `mcp.servers.gisul` registration, preserve it
+and prepare a loader-only bundle instead of adding the default OAuth bridge:
+
+```sh
+node clients/openclaw/prepare-existing.mjs --output /absolute/new/gisul-existing
+openclaw plugins install /absolute/new/gisul-existing
+openclaw mcp probe gisul --json
+```
+
+The output directory must be new and its parent must exist. This variant has no
+`.mcp.json` or bridge script. Existing endpoint, credentials, event logging and
+tool policy remain owned by the host's MCP registration. Its adapter must expose
+the three Gisul read tools. Use a fresh agent session for live search/load/file
+verification; the bundle-only live script below targets the default OAuth mode.
+
 Verification:
 
 ```sh

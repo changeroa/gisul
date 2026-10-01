@@ -38,7 +38,8 @@ Loading this skill does not authorize creating agents or sending messages.
 
 An empty search is different from a missing tool, authentication error or network
 failure. Report unavailable guidance and continue independent work. Never claim a
-failed load succeeded or request pasted credentials. Use the installed plugin's
-`scripts/bridge.mjs --login` command to sign in with the user's Ark-Point GitHub
-account, in the same OpenClaw profile. The plugin README explains installation,
-tool policy and login; do not weaken policy to make tools appear.
+failed load succeeded or request pasted credentials. Follow this deployment's
+existing sign-in instructions in the plugin README. The default bundle uses
+OAuth; existing-MCP mode preserves the host's endpoint, authentication and logging.
+Do not replace an existing connection with OAuth merely because the default
+installation example uses it. Do not weaken policy to make tools appear.

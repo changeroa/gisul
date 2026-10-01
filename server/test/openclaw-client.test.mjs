@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import hook from "../../clients/openclaw/plugin/hooks/gisul-discovery/handler.js";
 import { bridgePlan, parseArgs, resolveStateDir } from "../../clients/openclaw/plugin/scripts/bridge.mjs";
+import { prepareExisting } from "../../clients/openclaw/prepare-existing.mjs";
 
 const bundle = fileURLToPath(new URL("../../clients/openclaw/plugin/", import.meta.url));
 const bridge = join(bundle, "scripts/bridge.mjs");
@@ -26,6 +27,23 @@ function execute(args, env, input = "") {
     child.stdin.end(input);
   });
 }
+
+test("existing-MCP bundle adds guidance without replacing transport or credentials", async t => {
+  const root = await fixture(t), output = join(root, "existing");
+  const config = join(root, "openclaw.json");
+  const before = '{"mcp":{"servers":{"gisul":{"command":"existing-adapter","env":{"TOKEN":"fixture-only"}}}}}';
+  await writeFile(config, before);
+  assert.equal((await prepareExisting(output)).mcpRegistrationIncluded, false);
+  assert.equal(await readFile(config, "utf8"), before);
+  const manifest = JSON.parse(await readFile(join(output, ".codex-plugin/plugin.json"), "utf8"));
+  assert.equal(manifest.mcpServers, undefined);
+  assert.deepEqual((await readdir(output)).sort(), [".codex-plugin", "README.md", "gisul-client.json", "hooks", "package.json", "skills"]);
+  assert.match(await readFile(join(output, "skills/gisul/SKILL.md"), "utf8"), /existing-MCP mode preserves/);
+  assert.match(await readFile(join(output, "README.md"), "utf8"), /existing mcp.servers.gisul/);
+  await assert.rejects(prepareExisting(output), { code: "EEXIST" });
+  assert.equal(await readFile(config, "utf8"), before);
+  assert.ok((await readdir(output)).includes("skills"));
+});
 
 test("bundle declares only its loader, bootstrap hook and read-only OAuth bridge", async () => {
   const manifest = JSON.parse(await readFile(join(bundle, ".codex-plugin/plugin.json"), "utf8"));
