@@ -67,6 +67,38 @@ remain unchanged.
 Local server tests: 49 passed. Worker tests: 59 passed, including 14 OAuth
 integration tests and the existing reader/writer/publication compatibility
 tests. Type checking, search benchmark and OAuth deployment dry run passed.
-GitHub app creation and dedicated KV provisioning are complete. Secret
-provisioning and production OAuth login require completing GitHub's current
-account reauthentication prompt; deployment and OpenClaw migration are pending.
+Production OAuth was deployed on 2026-10-01 from source
+`3af736e8161152504fd339f496b474eb47ba258c`, after its PR CI passed.
+Cloudflare version: `5d67e2f4-1173-412f-9fdb-1df356aefbd0`.
+The canonical deployed checkout is retained on the Mac mini at
+`/Users/iyen/dev-tools/gisul-iyen-oauth/releases/3af736e8161152504fd339f496b474eb47ba258c`.
+The previous version, `baef02cb-a827-4cf3-98d4-cdc79dac9a92`, is recorded for rollback.
+
+Live health and OAuth metadata checks passed, and the pre-existing bearer
+connection still exposed its three read tools. GitHub browser login completed.
+An independently started native OpenClaw MCP runtime then reused the OAuth
+cache and completed discovery, commit-pinned load and load-bound supporting
+read, verifying both SHA-256 digests without using the legacy bearer token.
+
+Mac mini OpenClaw `2026.9.3` now uses the full bundle built from client source
+`b5eddedfa03e94dde8791e01934f5d8014ca6564`, installed at
+`/Users/iyen/.openclaw/extensions/gisul-openclaw`, targeting the IYEN endpoint.
+Only the standalone `mcp.servers.gisul` registration was removed; a semantic
+comparison verified that all other configuration was preserved. The original
+configuration and bundle remain in the private `pre-oauth-backup` directory
+under `/Users/iyen/.local/share/dev-tools/openclaw-gisul-oauth/b5eddedfa03e94dde8791e01934f5d8014ca6564`.
+
+After a graceful Gateway restart, its health check, an installed-bundle-only
+native test and a fresh agent session all passed. The agent's terminal receipt
+records successful search/load/read calls against IYEN release `20260929.38`,
+commit `cb56c1ade59bd999e8ae859bd19d0b030ab8c03c`. No channel delivery was requested.
+Sanitized evidence is in PR #8's
+`docs/evidence/openclaw-20261001/macmini-oauth.json`. This verifies a requested
+smoke workflow, not automatic skill-selection compliance on every future task.
+
+For headless SSH login, keep stdin open (for example, use an interactive SSH
+terminal) until the client lists tools and exits successfully, and forward its
+reported callback port to the browser machine. An exit code alone does not
+prove authentication: verify token persistence and a new MCP process. The
+first detached login in this deployment ended before those checks; retrying
+with stdin held open completed login and the independent checks above.
