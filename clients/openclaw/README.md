@@ -126,3 +126,19 @@ channel messages were delivered. Evidence:
 Compatibility scripts use private exports only in their test adapters; the
 plugin has no dependency on OpenClaw's internal module paths. Run the checks
 after an OpenClaw upgrade; format changes may require updating the adapters.
+
+Later on 2026-10-01, the Mac mini was migrated to the full OAuth bundle targeting
+`https://gisul.iyendev.com/mcp`, after IYEN's own OAuth server was deployed.
+The installed client source is `b5eddedfa03e94dde8791e01934f5d8014ca6564`;
+the deployed server source is `3af736e8161152504fd339f496b474eb47ba258c`.
+GitHub login, OAuth cache reuse from a new process, installed-bundle-only native
+calls and a fresh Gateway agent session all passed. Only the superseded
+standalone Gisul MCP entry changed in the user config. Other settings were
+verified equal, and the previous config/bundle remain privately backed up.
+The agent receipt includes all three successful Gisul calls and no channel
+delivery was requested. See [OAuth migration evidence](../../docs/evidence/openclaw-20261001/macmini-oauth.json).
+
+When logging in over SSH, keep stdin open until the login client lists tools
+and exits; forward its reported loopback callback port to the browser machine.
+Verify a fresh MCP connection after login. A detached command that exits before
+listing tools is insufficient evidence of saved authentication.
