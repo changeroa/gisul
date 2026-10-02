@@ -9,6 +9,10 @@ requires the user to request that skill. Load only a relevant result's exact URI
 with the search commit and read its complete instructions. Read the gisul loader
 skill for supporting-file reads, errors and handoff. If results are empty or
 unrelated, retry once with a shorter subject, retaining the commit, then proceed.
+For a requested pack or a combined workflow, discover with search_packs and use
+load_pack on selected URIs at the returned commit. This resolves definitions,
+not skill bodies or execution. Follow the loader for member selection; explicit
+skills still require the user request.
 Greetings, status replies and unchanged-task continuations need no new search.
 Respect a user ban on external access or skill lookup. If tools are unavailable,
 report that briefly and continue independent work. Do not copy remote skills

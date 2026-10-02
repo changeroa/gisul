@@ -1,6 +1,6 @@
 ---
 name: gisul
-description: Discover and load remote ARKPOINT workflow skills for an OpenClaw task, keeping the catalog and supporting files remote.
+description: Discover and load workflow skills and native skill packs from the connected Gisul library for an OpenClaw task, keeping the catalog and supporting files remote.
 ---
 
 Use the configured Gisul MCP tools, normally `gisul__search_skills`,
@@ -43,3 +43,7 @@ existing sign-in instructions in the plugin README. The default bundle uses
 OAuth; existing-MCP mode preserves the host's endpoint, authentication and logging.
 Do not replace an existing connection with OAuth merely because the default
 installation example uses it. Do not weaken policy to make tools appear.
+
+For an explicitly requested pack or a task benefiting from a combined workflow, use `search_packs` with subject/outcome terms. Packs are separate JSON resources, not SKILL.md wrappers. Search only discovers candidates. Use `load_pack` with the selected `uris` and returned `commit`; pass multiple pack URIs together to deduplicate shared members while retaining every scenario condition. This loads definitions and member metadata only.
+
+Apply required members within the user's scope; select conditional members by their actual conditions and record exclusion reasons. `when_requested` members and `invocation: explicit` skills require the user's request for that skill/use, even if a pack marks them required. Report any unavailable required activation as incomplete coverage. Load only selected skill bodies using their exact canonical URI and the pack's commit; retain digests and load IDs for evidence. Share scope, evidence and verification across packs without omitting distinct scenarios. A pack receipt proves resolution, not successful review or execution. Existing permissions remain unchanged.
