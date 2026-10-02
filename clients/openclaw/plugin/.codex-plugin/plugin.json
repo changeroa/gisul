@@ -1,0 +1,11 @@
+{
+  "name": "gisul-openclaw",
+  "version": "0.1.0",
+  "description": "Discover and read remote ARKPOINT workflow skills in OpenClaw.",
+  "author": { "name": "ARKPOINT" },
+  "skills": "./skills/",
+  "hooks": "./hooks/",
+  "mcpServers": "./.mcp.json",
+  "repository": "https://github.com/Ark-Point/gisul",
+  "license": "MIT"
+}
