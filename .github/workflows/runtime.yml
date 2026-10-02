@@ -34,3 +34,5 @@ jobs:
       - run: npm --prefix worker test
       - run: npx wrangler versions upload --dry-run
         working-directory: worker
+      - run: npx wrangler deploy --config wrangler.oauth.jsonc --dry-run
+        working-directory: worker
