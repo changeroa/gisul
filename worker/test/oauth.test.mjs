@@ -118,7 +118,8 @@ test("member login enables direct search/load/read and pins files across later r
   const token = await f.login();
   assert.notEqual(token.access_token, "github-user-token");
   const tools = (await (await f.rpc(token.access_token, "tools/list")).json()).result.tools.map(tool => tool.name);
-  assert.deepEqual(tools.sort(), ["load_skill", "read_skill_file", "search_skills"].sort());
+  assert.deepEqual(tools.sort(), ["load_skill", "read_skill_file", "search_skills", "search_packs", "load_pack"].sort());
+  assert.equal((await f.rpc(token.access_token, "tools/call", { name: "create_pack", arguments: {} })).status, 403);
   const found = await f.tool(token.access_token, "search_skills", { query: "review", mode: "automatic" });
   assert.equal(found.skills.length, 1);
   const loaded = await f.tool(token.access_token, "load_skill", { uri, commit: found.commit });
@@ -173,7 +174,7 @@ test("reader scope cannot write; membership revocation and outages remain distin
   const f = await fixture(t);
   const token = await f.login("skills:read");
   const tools = (await (await f.rpc(token.access_token, "tools/list")).json()).result.tools;
-  assert.equal(tools.length, 3);
+  assert.equal(tools.length, 5);
   assert.equal((await f.rpc(token.access_token, "tools/call", { name: "create_skill", arguments: {} })).status, 403);
   f.state.unavailable = true;
   assert.equal((await f.rpc(token.access_token, "tools/list")).status, 503);
@@ -217,7 +218,7 @@ test("refresh preserves readonly grant and rechecks active membership", async t 
   const result = await refresh(token.refresh_token);
   assert.equal(result.status, 200, await result.clone().text());
   const next = await result.json();
-  assert.equal((await (await f.rpc(next.access_token, "tools/list")).json()).result.tools.length, 3);
+  assert.equal((await (await f.rpc(next.access_token, "tools/list")).json()).result.tools.length, 5);
   f.state.member = false;
   const denied = await refresh(next.refresh_token);
   assert.equal(denied.status, 400, await denied.clone().text());

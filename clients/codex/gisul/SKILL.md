@@ -1,6 +1,6 @@
 ---
 name: gisul
-description: Discover workflow skills in the connected Gisul library by task subject and intended outcome, then load only relevant guidance. Also use to create or update remote skills when requested. Searching does not activate a skill.
+description: Discover workflow skills in the connected Gisul library by task subject and intended outcome, then load only relevant guidance. Also discover native skill packs for combined workflows and create or update remote skills/packs when requested. Searching does not activate a skill.
 ---
 
 Use the `gisul` MCP server's `search_skills`, `load_skill`, and `read_skill_file` tools.
@@ -26,3 +26,9 @@ The bridge verifies each read against the selected manifest. On a verification e
 Keep remote content in MCP reads. Do not copy the catalog into local skill directories. This loader provides a compatibility workflow; it does not turn every remote skill into a native `$skill` entry or enforce host-wide execution policy.
 
 If gisul is unavailable or reports an outdated upstream server, state the error and continue the user's task without claiming that a remote skill was applied.
+
+For an explicitly requested pack or a task benefiting from a combined workflow, use `search_packs` with subject/outcome terms. Packs are separate JSON resources, not SKILL.md wrappers. Search only discovers candidates. Use `load_pack` with the selected `uris` and returned `commit`; pass multiple pack URIs together to deduplicate shared members while retaining every scenario condition. This loads definitions and member metadata only.
+
+Apply required members within the user's scope; select conditional members by their actual conditions and record exclusion reasons. `when_requested` members and `invocation: explicit` skills require the user's request for that skill/use, even if a pack marks them required. Report any unavailable required activation as incomplete coverage. Load only selected skill bodies using their exact canonical URI and the pack's commit; retain digests and load IDs for evidence. Share scope, evidence and verification across packs without omitting distinct scenarios. A pack receipt proves resolution, not successful review or execution. Existing permissions remain unchanged.
+
+For requested pack writes, use `create_pack` or `update_pack` with the complete definition. Updates require the loaded pack's `digest` as `expected_digest`. Check `get_pack_write_status`, then reload definitions and references from the active release. Never report accepted Git writes as published.
